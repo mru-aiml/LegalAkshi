@@ -1,0 +1,1275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "package": {
+    "name": "LegalAkshi Rule & Compliance Configuration",
+    "version": "4.0.0",
+    "generated_on": "2026-09-14",
+    "legal_data_cutoff": "2026-09-12",
+    "purpose": "JSON projection/configuration for React/FastAPI consumers; PostgreSQL remains persistent legal/operational source of truth.",
+    "principles": [
+      "AI extracts. Rules interpret. Evidence supports. Scoring summarizes. Inspector decides.",
+      "Legal truth and application scoring are separate layers.",
+      "Rule applicability is evaluated before compliance status.",
+      "Historical reports retain the exact legal version and scoring policy version used.",
+      "No automated finding is a final offence determination without authorized verification."
+    ]
+  },
+  "legal_knowledge": {
+    "laws": [
+      {
+        "law_id": "LMA-2009",
+        "name": "Legal Metrology Act, 2009",
+        "act_number": "Act No. 1 of 2010",
+        "act_year": 2009,
+        "commencement_date": "2011-04-01",
+        "authority": "Department of Consumer Affairs, Food & Public Distribution",
+        "jurisdiction": "India",
+        "status": "IN_FORCE"
+      },
+      {
+        "law_id": "LMPC-2011",
+        "name": "Legal Metrology (Packaged Commodities) Rules, 2011",
+        "parent_law_id": "LMA-2009",
+        "authority": "Department of Consumer Affairs, Food & Public Distribution",
+        "jurisdiction": "India"
+      }
+    ],
+    "rules": [
+      {
+        "rule_id": "CHK-BEST-BEFORE",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(da)",
+        "title": "Best Before / Use By",
+        "field": "best_before",
+        "check_type": "DATE_REQUIRED_IF",
+        "mandatory_default": false,
+        "scoring_category": "BEST_BEFORE",
+        "requirement": "Best-before/use-by date where the commodity may become unfit over time.",
+        "source_reference": "Rule 6(1)(da)"
+      },
+      {
+        "rule_id": "CHK-COMMON-NAME",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(b)",
+        "title": "Common / Generic Name",
+        "field": "common_generic_name",
+        "check_type": "FIELD_PRESENT",
+        "mandatory_default": true,
+        "scoring_category": "COMMON_NAME",
+        "requirement": "Common or generic name of the commodity.",
+        "source_reference": "Rule 6(1)(b)"
+      },
+      {
+        "rule_id": "CHK-CONSUMER-CARE",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "2",
+        "clause": null,
+        "title": "Consumer Care Details",
+        "field": "consumer_care",
+        "check_type": "FIELD_PRESENT",
+        "mandatory_default": true,
+        "scoring_category": "CONSUMER_CARE",
+        "requirement": "Name, address, telephone and e-mail for consumer complaints.",
+        "source_reference": "Rule 6(2)"
+      },
+      {
+        "rule_id": "CHK-COUNTRY-ORIGIN",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(aa)",
+        "title": "Country of Origin",
+        "field": "country_of_origin",
+        "check_type": "CONDITIONAL_FIELD_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "COUNTRY_OF_ORIGIN",
+        "requirement": "Country of origin/manufacture/assembly for imported products.",
+        "source_reference": "Rule 6(1)(aa)"
+      },
+      {
+        "rule_id": "CHK-DIMENSIONS",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(f)",
+        "title": "Dimensions",
+        "field": "dimensions",
+        "check_type": "CONDITIONAL_FIELD_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "DIMENSIONS",
+        "requirement": "Dimensions of the commodity, where relevant.",
+        "source_reference": "Rule 6(1)(f)"
+      },
+      {
+        "rule_id": "CHK-ECOMMERCE-COO-FILTER",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "10A",
+        "clause": null,
+        "title": "E-commerce Country-of-Origin Filter",
+        "field": "ecommerce_coo_filter",
+        "check_type": "PLATFORM_FILTER_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "ECOMMERCE_COO",
+        "requirement": "Searchable/sortable country-of-origin filter for imported products sold via e-commerce.",
+        "source_reference": "Rule 6(10A)"
+      },
+      {
+        "rule_id": "CHK-ECOMMERCE-DECL",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "10",
+        "clause": null,
+        "title": "E-commerce Mandatory Declarations",
+        "field": "ecommerce_declarations",
+        "check_type": "PLATFORM_FILTER_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "ECOMMERCE",
+        "requirement": "Rule 6(1) declarations displayed on the e-commerce digital network.",
+        "source_reference": "Rule 6(10)"
+      },
+      {
+        "rule_id": "CHK-GM-FOOD",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "7",
+        "clause": null,
+        "title": "GM Food Declaration",
+        "field": "gm_label",
+        "check_type": "CONDITIONAL_FIELD_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "GM_FOOD",
+        "requirement": "\"GM\" declaration on the principal display panel for genetically modified food.",
+        "source_reference": "Rule 6(7)"
+      },
+      {
+        "rule_id": "CHK-MANUFACTURER",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(a)",
+        "title": "Manufacturer / Packer / Importer Details",
+        "field": "manufacturer",
+        "check_type": "QR_OR_ON_PACKAGE",
+        "mandatory_default": true,
+        "scoring_category": "MANUFACTURER",
+        "requirement": "Name and address of manufacturer/packer/importer; electronic products may convey the address via QR under the current version.",
+        "source_reference": "Rule 6(1)(a)"
+      },
+      {
+        "rule_id": "CHK-MFG-DATE",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(d)",
+        "title": "Month/Year of Manufacture",
+        "field": "mfg_month_year",
+        "check_type": "DATE_VALID",
+        "mandatory_default": true,
+        "scoring_category": "MFG_DATE",
+        "requirement": "Month and year of manufacture/packing/import.",
+        "source_reference": "Rule 6(1)(d)"
+      },
+      {
+        "rule_id": "CHK-MRP",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(e)",
+        "title": "Maximum Retail Price",
+        "field": "mrp",
+        "check_type": "FIELD_PRESENT",
+        "mandatory_default": true,
+        "scoring_category": "MRP",
+        "requirement": "Retail sale price inclusive of all taxes.",
+        "source_reference": "Rule 6(1)(e)"
+      },
+      {
+        "rule_id": "CHK-NET-QTY",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(c)",
+        "title": "Net Quantity",
+        "field": "net_quantity",
+        "check_type": "UNIT_NORMALIZATION",
+        "mandatory_default": true,
+        "scoring_category": "NET_QUANTITY",
+        "requirement": "Net quantity in standard weight/measure/number.",
+        "source_reference": "Rule 6(1)(c)"
+      },
+      {
+        "rule_id": "CHK-OTHER-MATTERS",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "1",
+        "clause": "(g)",
+        "title": "Other Specified Declarations",
+        "field": "other_declarations",
+        "check_type": "MANUAL_REVIEW",
+        "mandatory_default": false,
+        "scoring_category": "OTHER",
+        "requirement": "Any other matter the Rules require, not separately enumerated.",
+        "source_reference": "Rule 6(1)(g)"
+      },
+      {
+        "rule_id": "CHK-UNIT-SALE-PRICE",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "11",
+        "clause": null,
+        "title": "Unit Sale Price",
+        "field": "unit_sale_price",
+        "check_type": "CONDITIONAL_FIELD_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "UNIT_SALE_PRICE",
+        "requirement": "Unit sale price per prescribed standard unit.",
+        "source_reference": "Rule 6(11)"
+      },
+      {
+        "rule_id": "CHK-VEG-NONVEG",
+        "law_id": "LMPC-2011",
+        "postgres_rule_id": "33333333-3333-3333-3333-333333330006",
+        "rule_number": "6",
+        "sub_rule": "8",
+        "clause": null,
+        "title": "Veg / Non-Veg Dot",
+        "field": "veg_nonveg_dot",
+        "check_type": "CONDITIONAL_FIELD_PRESENT",
+        "mandatory_default": false,
+        "scoring_category": "VEG_NONVEG",
+        "requirement": "Green/brown-red dot for specified cosmetics/toiletries.",
+        "source_reference": "Rule 6(8)"
+      }
+    ],
+    "rule_versions": [
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550018",
+        "check_id": "CHK-BEST-BEFORE",
+        "effective_from": "2011-04-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Best before / use by date where commodity may become unfit for human consumption",
+        "legal_text_or_paraphrase": "Where a package contains a commodity which may become unfit for human consumption after a period of time, the best before or use by date, month and year shall also be mentioned, subject to the rule's cross-law provisos.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550009",
+        "check_id": "CHK-COMMON-NAME",
+        "effective_from": "2011-06-01",
+        "effective_to": "2023-06-23",
+        "status": "SUPERSEDED",
+        "requirement": "Common or generic name of the commodity",
+        "legal_text_or_paraphrase": "Every package must declare the common or generic name of the commodity contained in it; where the package contains more than one product, the name and number/quantity of each.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550026",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550026",
+        "check_id": "CHK-COMMON-NAME",
+        "effective_from": "2023-06-23",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Common/generic name with electronic-product QR proviso",
+        "legal_text_or_paraphrase": "Every package shall bear the common or generic name of the commodity and, where the package contains more than one product, the name and number or quantity of each product. For electronic products, the package shall inform consumers to scan the QR code for this information where it is declared through the QR code and not on the package itself.",
+        "supersedes": "55555555-5555-5555-5555-555555550009",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 456(E)",
+          "publication_date": "2023-06-23",
+          "amendment_effective_date": "2023-06-23",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2023",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2023.6.23%20QR%20Code%20PCR%20amendment_1732871827.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550005",
+        "check_id": "CHK-CONSUMER-CARE",
+        "effective_from": "2011-06-01",
+        "effective_to": "2016-01-01",
+        "status": "SUPERSEDED",
+        "requirement": "Consumer-care contact details (original)",
+        "legal_text_or_paraphrase": "Every package shall bear the name and address of the person/office to be contacted in case of consumer complaints (pre-2016 wording).",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550006",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550006",
+        "check_id": "CHK-CONSUMER-CARE",
+        "effective_from": "2016-01-01",
+        "effective_to": "2023-06-23",
+        "status": "SUPERSEDED",
+        "requirement": "Consumer-care contact details (name, address, telephone, email)",
+        "legal_text_or_paraphrase": "Every package shall bear the name, address, telephone number and e-mail address of the person or office that can be contacted in case of consumer complaints.",
+        "supersedes": "55555555-5555-5555-5555-555555550005",
+        "superseded_by": "55555555-5555-5555-5555-555555550028",
+        "provenance": {
+          "notification_number": "G.S.R. 385(E)",
+          "publication_date": "2015-05-14",
+          "amendment_effective_date": "2015-05-14",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2015",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/8%28x%29_0_1732870750.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550028",
+        "check_id": "CHK-CONSUMER-CARE",
+        "effective_from": "2023-06-23",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Consumer-care details with electronic-product QR proviso",
+        "legal_text_or_paraphrase": "Every package shall bear the name, address, telephone number and e-mail address of the person or office that can be contacted in case of consumer complaints. For electronic products, the package itself shall declare the telephone number and e-mail address and may additionally inform consumers to scan the QR code for other related information where such information is declared through the QR code and not on the package itself.",
+        "supersedes": "55555555-5555-5555-5555-555555550006",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 456(E)",
+          "publication_date": "2023-06-23",
+          "amendment_effective_date": "2023-06-23",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2023",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2023.6.23%20QR%20Code%20PCR%20amendment_1732871827.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550017",
+        "check_id": "CHK-COUNTRY-ORIGIN",
+        "effective_from": "2018-01-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Country of origin/manufacture/assembly for imported products",
+        "legal_text_or_paraphrase": "In case of imported products, the name of the country of origin or manufacture or assembly shall be mentioned on the package.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 629(E)",
+          "publication_date": "2017-06-23",
+          "amendment_effective_date": "2018-01-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2017",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/8%28xii%29_0_1732871346.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550010",
+        "check_id": "CHK-DIMENSIONS",
+        "effective_from": "2011-06-01",
+        "effective_to": "2023-06-23",
+        "status": "SUPERSEDED",
+        "requirement": "Dimensions of the commodity, where relevant",
+        "legal_text_or_paraphrase": "Where the size/dimensions of the commodity are relevant to the consumer, every package must declare them; for multiple pieces, dimensions of each piece.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550027",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550027",
+        "check_id": "CHK-DIMENSIONS",
+        "effective_from": "2023-06-23",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Dimensions where relevant with electronic-product QR proviso",
+        "legal_text_or_paraphrase": "Where the size/dimensions of the commodity are relevant, the dimensions shall be declared. For electronic products, the package shall inform consumers to scan the QR code for dimensions where that information is declared through the QR code and not on the package itself.",
+        "supersedes": "55555555-5555-5555-5555-555555550010",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 456(E)",
+          "publication_date": "2023-06-23",
+          "amendment_effective_date": "2023-06-23",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2023",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2023.6.23%20QR%20Code%20PCR%20amendment_1732871827.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550007",
+        "check_id": "CHK-ECOMMERCE-COO-FILTER",
+        "effective_from": "2026-07-01",
+        "effective_to": "2027-07-01",
+        "status": "IN_FORCE",
+        "requirement": "Searchable/sortable country-of-origin filter for imported e-commerce listings (v1)",
+        "legal_text_or_paraphrase": "Every e-commerce entity selling imported products shall provide the product listings of such imported products in a searchable and sortable filter specifying the country of origin.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550008",
+        "provenance": {
+          "notification_number": "G.S.R. 128(E)",
+          "publication_date": "2026-02-13",
+          "amendment_effective_date": "2026-07-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2026",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2026.02.13%20PCR%201st%20COO%20Filter%20on%20e-commerce%20websites_1771231030.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550008",
+        "check_id": "CHK-ECOMMERCE-COO-FILTER",
+        "effective_from": "2027-07-01",
+        "effective_to": null,
+        "status": "NOT_YET_IN_FORCE",
+        "requirement": "Searchable/sortable country-of-origin filter for imported e-commerce listings (v2, expanded — VERIFICATION REQUIRED)",
+        "legal_text_or_paraphrase": "Reported text: e-commerce entities selling imported products shall ensure that the product listing of such imported products contains a searchable and sortable filter specifying the country of origin, with effect from 1 July 2027 — exact expanded wording not yet confirmed against the primary Gazette notification.",
+        "supersedes": "55555555-5555-5555-5555-555555550007",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 312(E)",
+          "publication_date": "2026-04-27",
+          "amendment_effective_date": "2027-07-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Second Amendment Rules, 2026",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2026.4.27%20PCR%202nd%20COO%20from%201.7.2027_1777348487.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550022",
+        "check_id": "CHK-ECOMMERCE-DECL",
+        "effective_from": "2018-01-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Mandatory declarations displayed on e-commerce network",
+        "legal_text_or_paraphrase": "An e-commerce entity shall ensure that the mandatory declarations specified in Rule 6(1), except the month and year in which the commodity is manufactured or packed, are displayed on the digital/electronic network used for e-commerce transactions. In marketplace models, responsibility for correctness follows the Rule 6(10) proviso.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 629(E)",
+          "publication_date": "2017-06-23",
+          "amendment_effective_date": "2018-01-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2017",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/8%28xii%29_0_1732871346.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550019",
+        "check_id": "CHK-GM-FOOD",
+        "effective_from": "2013-01-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "GM declaration for genetically modified food",
+        "legal_text_or_paraphrase": "Every package containing genetically modified food shall bear at the top of its principal display panel the words “GM”.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 427(E)",
+          "publication_date": "2012-06-05",
+          "amendment_effective_date": "2012-06-05",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2012",
+          "source_url": "https://upload.indiacode.nic.in/showfile?actid=AC_CEN_21_44_00007_201001_1517807327712&filename=6-lm_pckgd_comm_amndt_rls_2012.pdf&type=notification",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550001",
+        "check_id": "CHK-MANUFACTURER",
+        "effective_from": "2011-06-01",
+        "effective_to": "2023-06-23",
+        "status": "SUPERSEDED",
+        "requirement": "Name and address of manufacturer/packer/importer",
+        "legal_text_or_paraphrase": "Every package must bear the name and complete address of the manufacturer, or where the manufacturer is not the packer, the name and address of the manufacturer and packer, and in case of imported packages, the name and address of the importer.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550025",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550025",
+        "check_id": "CHK-MANUFACTURER",
+        "effective_from": "2023-06-23",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Name and address of manufacturer/packer/importer with electronic-product QR proviso",
+        "legal_text_or_paraphrase": "Every package shall bear the name and address of the manufacturer, or where the manufacturer is not the packer, the name and address of the manufacturer and packer, and for an imported package the name and address of the importer. For electronic products, the package shall declare the manufacturer/packer/importer name on the package itself and inform consumers to scan the QR code for the address and related information where that information is declared through the QR code and not on the package itself.",
+        "supersedes": "55555555-5555-5555-5555-555555550001",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 456(E)",
+          "publication_date": "2023-06-23",
+          "amendment_effective_date": "2023-06-23",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2023",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/2023.6.23%20QR%20Code%20PCR%20amendment_1732871827.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550004",
+        "check_id": "CHK-MFG-DATE",
+        "effective_from": "2011-06-01",
+        "effective_to": "2022-10-01",
+        "status": "SUPERSEDED",
+        "requirement": "Month and year of manufacture/packing/import",
+        "legal_text_or_paraphrase": "The month and year in which the commodity is manufactured, pre-packed or imported shall be mentioned on the package, subject to specified exceptions.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550029",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550029",
+        "check_id": "CHK-MFG-DATE",
+        "effective_from": "2022-10-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Month and year of manufacture",
+        "legal_text_or_paraphrase": "The month and year in which the commodity is manufactured shall be mentioned on the package, subject to the applicable provisos/exceptions under Rule 6(1)(d) and other applicable law.",
+        "supersedes": "55555555-5555-5555-5555-555555550004",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 226(E)",
+          "publication_date": "2022-03-28",
+          "amendment_effective_date": "2022-10-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2022",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/GSR226_1732871458.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550003",
+        "check_id": "CHK-MRP",
+        "effective_from": "2011-06-01",
+        "effective_to": "2022-10-01",
+        "status": "SUPERSEDED",
+        "requirement": "Retail sale price (MRP), inclusive of all taxes",
+        "legal_text_or_paraphrase": "Every package must declare the retail sale price of the commodity, which shall be inclusive of all taxes, in the manner prescribed.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550030",
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550030",
+        "check_id": "CHK-MRP",
+        "effective_from": "2022-10-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Retail sale price (MRP) in Indian currency, inclusive of all taxes",
+        "legal_text_or_paraphrase": "The retail sale price of the package shall be declared in Indian currency. The retail sale price is the maximum price at which the commodity in packaged form may be sold to the consumer inclusive of all taxes, subject to the provisos in the Rules, including the special proviso for an essential commodity whose retail sale price is fixed and notified under the Essential Commodities Act, 1955.",
+        "supersedes": "55555555-5555-5555-5555-555555550003",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 226(E)",
+          "publication_date": "2022-03-28",
+          "amendment_effective_date": "2022-10-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2022",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/GSR226_1732871458.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550002",
+        "check_id": "CHK-NET-QTY",
+        "effective_from": "2011-06-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Net quantity in standard units",
+        "legal_text_or_paraphrase": "Every package must declare the net quantity, in terms of standard weight/measure/number, of the commodity contained in the package.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550011",
+        "check_id": "CHK-OTHER-MATTERS",
+        "effective_from": "2011-06-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Other declarations specified elsewhere in the Rules",
+        "legal_text_or_paraphrase": "Any other matter which the Rules require to be declared on the package, not separately enumerated in clauses (a)-(f).",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": null,
+          "publication_date": null,
+          "amendment_effective_date": null,
+          "source_type": "RULE",
+          "source_title": "The Legal Metrology (Packaged Commodities) Rules, 2011",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550012",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "effective_from": "2022-04-01",
+        "effective_to": "2022-10-01",
+        "status": "SUPERSEDED",
+        "requirement": "Unit sale price declaration (v1, original)",
+        "legal_text_or_paraphrase": "Original 2021 unit-sale-price declaration requirement inserted by G.S.R. 779(E) — VERIFICATION REQUIRED for exact wording.",
+        "supersedes": null,
+        "superseded_by": "55555555-5555-5555-5555-555555550013",
+        "provenance": {
+          "notification_number": "G.S.R. 779(E)",
+          "publication_date": "2021-11-02",
+          "amendment_effective_date": "2022-04-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2021",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/The_Legal_Metrology_Packaged_Commodities_Amendment_Rule%2C_2021_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "effective_from": "2022-10-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Unit sale price declaration",
+        "legal_text_or_paraphrase": "The unit sale price shall be declared as: Rs.__ per g for net quantity below 1 kg; Rs.__ per kg for net quantity of 1 kg or more; Rs.__ per cm for net length below 1 m; Rs.__ per meter for net length of 1 m or more; Rs.__ per number; Rs.__ per ml for net volume below 1 litre; and Rs.__ per litre for net volume of 1 litre or more.",
+        "supersedes": "55555555-5555-5555-5555-555555550012",
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 226(E)",
+          "publication_date": "2022-03-28",
+          "amendment_effective_date": "2022-10-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2022",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/files/GSR226_1732871458.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      },
+      {
+        "rule_version_id": "55555555-5555-5555-5555-555555550020",
+        "check_id": "CHK-VEG-NONVEG",
+        "effective_from": "2014-07-01",
+        "effective_to": null,
+        "status": "IN_FORCE",
+        "requirement": "Vegetarian/non-vegetarian dot for specified cosmetics and toiletries",
+        "legal_text_or_paraphrase": "Packages containing soap, shampoos, tooth pastes and other cosmetics and toiletries shall bear at the top of the principal display panel a red or brown dot for products of non-vegetarian origin and a green dot for products of vegetarian origin.",
+        "supersedes": null,
+        "superseded_by": null,
+        "provenance": {
+          "notification_number": "G.S.R. 137",
+          "publication_date": "2014-06-16",
+          "amendment_effective_date": "2014-07-01",
+          "source_type": "GAZETTE_NOTIFICATION",
+          "source_title": "Legal Metrology (Packaged Commodities) Amendment Rules, 2014",
+          "source_url": "https://consumeraffairs.gov.in/public/upload/admin/cmsfiles/whatsnews/Book_on_Legal_Metrology_Packaged_Commodities_Rules%2C2011_with_all_amendments_whatsnews.pdf",
+          "authenticity_status": "VERIFIED_PRIMARY"
+        }
+      }
+    ],
+    "applicability_rules": [
+      {
+        "applicability_id": "3660d372-c679-42a6-80d3-612d8f2f56c5",
+        "check_id": "CHK-BEST-BEFORE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550018",
+        "conditions": {
+          "eq": true,
+          "field": "may_become_unfit"
+        },
+        "result": "CONDITIONAL",
+        "reason": "Best-before/use-by declaration depends on whether the commodity may become unfit over time and applicable food-law provisos."
+      },
+      {
+        "applicability_id": "c82168fa-7ed1-48d4-a92e-2976a80d60ca",
+        "check_id": "CHK-COMMON-NAME",
+        "rule_version_id": "55555555-5555-5555-5555-555555550026",
+        "conditions": {
+          "all": [
+            {
+              "eq": true,
+              "field": "electronic_product"
+            },
+            {
+              "eq": true,
+              "field": "qr_declared"
+            },
+            {
+              "eq": true,
+              "field": "package_qr_notice_present"
+            }
+          ]
+        },
+        "result": "CONDITIONAL",
+        "reason": "For electronic products, common/generic name information may be supplied through QR where the package carries the required notice and the information is not on-package."
+      },
+      {
+        "applicability_id": "1c6a6c1f-83de-4322-af8e-027084b2cbd6",
+        "check_id": "CHK-CONSUMER-CARE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550028",
+        "conditions": {
+          "eq": true,
+          "field": "electronic_product"
+        },
+        "result": "CONDITIONAL",
+        "reason": "For electronic products, telephone number and e-mail address remain on-package; QR may carry other related information when the required notice is present."
+      },
+      {
+        "applicability_id": "9e3da437-cfcd-4495-bde6-d28d903e31af",
+        "check_id": "CHK-COUNTRY-ORIGIN",
+        "rule_version_id": "55555555-5555-5555-5555-555555550017",
+        "conditions": {
+          "eq": true,
+          "field": "imported"
+        },
+        "result": "REQUIRED",
+        "reason": "Country of origin is required for imported products."
+      },
+      {
+        "applicability_id": "58952699-bb58-41d9-8648-10cbba8fe9d3",
+        "check_id": "CHK-DIMENSIONS",
+        "rule_version_id": "55555555-5555-5555-5555-555555550027",
+        "conditions": {
+          "all": [
+            {
+              "eq": true,
+              "field": "electronic_product"
+            },
+            {
+              "eq": true,
+              "field": "qr_declared"
+            },
+            {
+              "eq": true,
+              "field": "package_qr_notice_present"
+            }
+          ]
+        },
+        "result": "CONDITIONAL",
+        "reason": "For electronic products, dimensions may be supplied through QR where the package carries the required notice and the information is not on-package."
+      },
+      {
+        "applicability_id": "62126e9b-ce6a-49b8-8914-3f8fbad816bc",
+        "check_id": "CHK-ECOMMERCE-COO-FILTER",
+        "rule_version_id": "55555555-5555-5555-5555-555555550007",
+        "conditions": {
+          "all": [
+            {
+              "eq": true,
+              "field": "ecommerce"
+            },
+            {
+              "eq": true,
+              "field": "imported"
+            }
+          ]
+        },
+        "result": "REQUIRED",
+        "reason": "E-commerce sale of an imported product triggers the country-of-origin searchable filter requirement (Rule 6(10A) v1, in force 1 Jul 2026 – 30 Jun 2027)."
+      },
+      {
+        "applicability_id": "8d4be72a-30c6-4a2e-9bd1-0345756a796e",
+        "check_id": "CHK-ECOMMERCE-COO-FILTER",
+        "rule_version_id": "55555555-5555-5555-5555-555555550007",
+        "conditions": {
+          "eq": false,
+          "field": "imported"
+        },
+        "result": "NOT_APPLICABLE",
+        "reason": "Domestic (non-imported) products are outside the scope of Rule 6(10A)."
+      },
+      {
+        "applicability_id": "e179ff63-6258-4054-b7b5-5db90f0e698c",
+        "check_id": "CHK-ECOMMERCE-DECL",
+        "rule_version_id": "55555555-5555-5555-5555-555555550022",
+        "conditions": {
+          "eq": true,
+          "field": "ecommerce"
+        },
+        "result": "REQUIRED",
+        "reason": "E-commerce entities must display the Rule 6(1) mandatory declarations on the digital/electronic network, subject to Rule 6(10) exceptions/provisos."
+      },
+      {
+        "applicability_id": "fe55710a-bcfc-4347-9a9b-c1d11fef7c12",
+        "check_id": "CHK-GM-FOOD",
+        "rule_version_id": "55555555-5555-5555-5555-555555550019",
+        "conditions": {
+          "eq": true,
+          "field": "genetically_modified"
+        },
+        "result": "REQUIRED",
+        "reason": "GM food triggers the Rule 6(7) declaration."
+      },
+      {
+        "applicability_id": "0011bada-059d-4051-8fb3-ad8d79797733",
+        "check_id": "CHK-MANUFACTURER",
+        "rule_version_id": "55555555-5555-5555-5555-555555550025",
+        "conditions": {
+          "all": [
+            {
+              "eq": true,
+              "field": "electronic_product"
+            },
+            {
+              "eq": true,
+              "field": "qr_declared"
+            },
+            {
+              "eq": true,
+              "field": "package_qr_notice_present"
+            }
+          ]
+        },
+        "result": "CONDITIONAL",
+        "reason": "For electronic products, address-related information may be conveyed through QR where the package carries the required QR notice; manufacturer/packer/importer name remains on-package."
+      },
+      {
+        "applicability_id": "df7affb7-45b4-4a9f-a50f-28692694bcf6",
+        "check_id": "CHK-MFG-DATE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550004",
+        "conditions": {
+          "eq": "COSMETIC",
+          "field": "category"
+        },
+        "result": "CONDITIONAL",
+        "reason": "Applicability of the month/year-of-manufacture declaration to specific cosmetic sub-categories depends on Fourth Schedule exclusions — VERIFICATION REQUIRED against the consolidated Rules text before treating as REQUIRED or NOT_REQUIRED outright."
+      },
+      {
+        "applicability_id": "91ce421d-5548-42b8-9af5-8187636b1ac6",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "any": [
+            {
+              "eq": true,
+              "field": "combination_package"
+            },
+            {
+              "eq": true,
+              "field": "group_package"
+            },
+            {
+              "eq": true,
+              "field": "multi_piece_package"
+            }
+          ]
+        },
+        "result": "NOT_REQUIRED",
+        "reason": "Official DCA FAQ states unit sale price is not required for combination, group or multi-piece packages. This is guidance and should be treated as a rule-engine exception only after confirming the current consolidated rule text."
+      },
+      {
+        "applicability_id": "df97a31a-a6f5-40b3-b412-f405f85ba82a",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "in": [
+            "weight",
+            "volume",
+            "length",
+            "number"
+          ],
+          "field": "quantity_type"
+        },
+        "result": "REQUIRED",
+        "reason": "Unit sale price applies wherever the commodity is sold by length, volume, weight or number and a per-unit comparison is meaningful."
+      },
+      {
+        "applicability_id": "c87b52a9-52ed-4f9a-b450-954b120f844b",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "all": [
+            {
+              "eq": "number",
+              "field": "quantity_type"
+            },
+            {
+              "eq": false,
+              "field": "combination_package"
+            },
+            {
+              "eq": false,
+              "field": "group_package"
+            },
+            {
+              "eq": false,
+              "field": "multi_piece_package"
+            }
+          ]
+        },
+        "result": "REQUIRED",
+        "reason": "Unit sale price applies to ordinary number-based pre-packaged commodities."
+      },
+      {
+        "applicability_id": "38ff023f-c46d-4fb5-a023-1ba16cc03d81",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "all": [
+            {
+              "eq": "weight",
+              "field": "quantity_type"
+            },
+            {
+              "eq": false,
+              "field": "combination_package"
+            },
+            {
+              "eq": false,
+              "field": "group_package"
+            },
+            {
+              "eq": false,
+              "field": "multi_piece_package"
+            }
+          ]
+        },
+        "result": "REQUIRED",
+        "reason": "Unit sale price applies to ordinary weight-based pre-packaged commodities; the package-type exceptions must be evaluated separately."
+      },
+      {
+        "applicability_id": "d2c655d1-e234-4a75-a76f-f79133d8bcee",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "all": [
+            {
+              "eq": "volume",
+              "field": "quantity_type"
+            },
+            {
+              "eq": false,
+              "field": "combination_package"
+            },
+            {
+              "eq": false,
+              "field": "group_package"
+            },
+            {
+              "eq": false,
+              "field": "multi_piece_package"
+            }
+          ]
+        },
+        "result": "REQUIRED",
+        "reason": "Unit sale price applies to ordinary volume-based pre-packaged commodities."
+      },
+      {
+        "applicability_id": "01a60939-e83d-40e5-99c5-1e1475c1ebcb",
+        "check_id": "CHK-UNIT-SALE-PRICE",
+        "rule_version_id": "55555555-5555-5555-5555-555555550013",
+        "conditions": {
+          "all": [
+            {
+              "eq": "length",
+              "field": "quantity_type"
+            },
+            {
+              "eq": false,
+              "field": "combination_package"
+            },
+            {
+              "eq": false,
+              "field": "group_package"
+            },
+            {
+              "eq": false,
+              "field": "multi_piece_package"
+            }
+          ]
+        },
+        "result": "REQUIRED",
+        "reason": "Unit sale price applies to ordinary length-based pre-packaged commodities."
+      },
+      {
+        "applicability_id": "8099ac16-be38-420e-8e3a-5a91a1a1056a",
+        "check_id": "CHK-VEG-NONVEG",
+        "rule_version_id": "55555555-5555-5555-5555-555555550020",
+        "conditions": {
+          "all": [
+            {
+              "eq": "COSMETIC",
+              "field": "category"
+            },
+            {
+              "in": [
+                "SOAP",
+                "SHAMPOO",
+                "TOOTHPASTE",
+                "COSMETIC_TOILETRY"
+              ],
+              "field": "subcategory"
+            }
+          ]
+        },
+        "result": "CONDITIONAL",
+        "reason": "Rule 6(8) applies to specified cosmetics/toiletries; origin classification determines the dot declaration."
+      }
+    ]
+  },
+  "compliance_evaluation": {
+    "statuses": [
+      "PASS",
+      "FAIL",
+      "NEEDS_REVIEW",
+      "NOT_APPLICABLE"
+    ],
+    "check_types": [
+      "CONDITIONAL_FIELD_PRESENT",
+      "CROSS_FIELD_COMPARE",
+      "DATE_REQUIRED_IF",
+      "DATE_VALID",
+      "FIELD_ABSENT",
+      "FIELD_PRESENT",
+      "FORMAT_VALID",
+      "MANUAL_REVIEW",
+      "NUMERIC_COMPARE",
+      "PLATFORM_FILTER_PRESENT",
+      "QR_DATA_PRESENT",
+      "QR_OR_ON_PACKAGE",
+      "REGEX_MATCH",
+      "TEXT_CONTAINS",
+      "TEXT_MATCH",
+      "UNIT_NORMALIZATION"
+    ],
+    "confidence_policy": {
+      "low_confidence_action": "REVIEW",
+      "note": "Confidence is an application/evidence policy, not a statutory legal threshold."
+    },
+    "evidence_fields": [
+      "field",
+      "detected_value",
+      "normalized_value",
+      "confidence",
+      "source_evidence_id",
+      "bounding_box",
+      "ocr_engine",
+      "extraction_timestamp"
+    ]
+  },
+  "scoring_policy": [
+    {
+      "policy_id": "DEFAULT-2026",
+      "name": "LegalAkshi Compliance Score",
+      "version": "1.1",
+      "active": true,
+      "calculation": {
+        "method": "WEIGHTED_FINDINGS",
+        "review_handling": "DO_NOT_FINALIZE_WITHOUT_REVIEW",
+        "not_applicable_handling": "EXCLUDE_FROM_DENOMINATOR"
+      },
+      "rules": [
+        {
+          "check_id": "CHK-MRP",
+          "weight": 20.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-MANUFACTURER",
+          "weight": 15.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-NET-QTY",
+          "weight": 15.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-CONSUMER-CARE",
+          "weight": 15.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-COUNTRY-ORIGIN",
+          "weight": 15.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-ECOMMERCE-DECL",
+          "weight": 15.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-GM-FOOD",
+          "weight": 15.0,
+          "severity": "HIGH"
+        },
+        {
+          "check_id": "CHK-MFG-DATE",
+          "weight": 10.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-BEST-BEFORE",
+          "weight": 10.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-VEG-NONVEG",
+          "weight": 10.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-UNIT-SALE-PRICE",
+          "weight": 10.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-ECOMMERCE-COO-FILTER",
+          "weight": 10.0,
+          "severity": "MEDIUM"
+        },
+        {
+          "check_id": "CHK-COMMON-NAME",
+          "weight": 5.0,
+          "severity": "LOW"
+        },
+        {
+          "check_id": "CHK-DIMENSIONS",
+          "weight": 5.0,
+          "severity": "LOW"
+        },
+        {
+          "check_id": "CHK-OTHER-MATTERS",
+          "weight": 0.0,
+          "severity": "LOW"
+        }
+      ],
+      "note": "Application-level scoring weights only — never a statutory penalty value, never a substitute for inspector verification. Weight=0 checks are tracked for compliance visibility but excluded from the score."
+    }
+  ],
+  "inspection_product_schema": {
+    "required": [
+      "product_name",
+      "is_prepackaged",
+      "category"
+    ],
+    "fields": {
+      "product_name": "string",
+      "brand": "string",
+      "manufacturer": "string",
+      "packer": "string",
+      "importer": "string",
+      "country_of_origin": "string",
+      "category": "string",
+      "subcategory": "string",
+      "is_prepackaged": "boolean",
+      "intended_consumer_type": "string",
+      "quantity": "number",
+      "quantity_unit": "string",
+      "quantity_type": "weight|volume|number",
+      "manufacturing_date": "date",
+      "packing_date": "date",
+      "import_date": "date",
+      "best_before": "date",
+      "use_by": "date",
+      "imported": "boolean",
+      "ecommerce": "boolean",
+      "product_identifier": "string",
+      "barcode": "string",
+      "qr_code": "string",
+      "source_listing_url": "string",
+      "electronic_product": "boolean",
+      "food": "boolean",
+      "cosmetic": "boolean",
+      "may_become_unfit": "boolean",
+      "combination_package": "boolean",
+      "group_package": "boolean",
+      "multi_piece_package": "boolean",
+      "package_qr_notice_present": "boolean",
+      "country_of_origin_filter": "boolean"
+    }
+  },
+  "operational_entities": {
+    "inspection": "inspections",
+    "product": "inspected_products",
+    "evidence": "inspection_evidence",
+    "extraction": "extracted_declarations",
+    "compliance": "compliance_results",
+    "violation": "violations",
+    "verification": "inspector_verifications",
+    "enforcement_action": "enforcement_actions",
+    "notice": "notices",
+    "compounding_case": "compounding_cases",
+    "legal_case": "legal_cases",
+    "case_event": "case_events",
+    "case_document": "case_documents",
+    "audit_log": "audit_logs",
+    "engine_run": "engine_runs"
+  }
+}

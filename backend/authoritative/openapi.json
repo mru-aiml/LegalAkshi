@@ -1,0 +1,676 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LegalAkshi Compliance API",
+    "version": "4.0.0",
+    "description": "REST/JSON contract between React frontend and FastAPI backend."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000/api/v1"
+    }
+  ],
+  "paths": {
+    "/inspections": {
+      "post": {
+        "summary": "Create inspection",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inspection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List inspections",
+        "responses": {
+          "200": {
+            "description": "Inspection list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Inspection"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/inspections/{inspection_id}/products": {
+      "post": {
+        "summary": "Add inspected product",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/InspectionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Product"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/inspections/{inspection_id}/analyze": {
+      "post": {
+        "summary": "Run OCR + extraction + applicability + compliance + scoring",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/InspectionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Final analysis response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/inspections/{inspection_id}/products/{product_id}/compliance": {
+      "get": {
+        "summary": "Get legal findings and evidence",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/InspectionId"
+          },
+          {
+            "$ref": "#/components/parameters/ProductId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compliance findings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Finding"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rules": {
+      "get": {
+        "summary": "List check definitions",
+        "responses": {
+          "200": {
+            "description": "Rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Rule"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rules/{check_id}": {
+      "get": {
+        "summary": "Get check definition + current legal version",
+        "parameters": [
+          {
+            "name": "check_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rule detail"
+          }
+        }
+      }
+    },
+    "/reports/{report_id}": {
+      "get": {
+        "summary": "Get final report",
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/violations/{violation_id}/verify": {
+      "post": {
+        "summary": "Inspector verification of potential violation",
+        "parameters": [
+          {
+            "name": "violation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Verification"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification recorded"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "InspectionId": {
+        "name": "inspection_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ProductId": {
+        "name": "product_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "InspectionCreate": {
+        "type": "object",
+        "required": [
+          "inspector_id",
+          "inspector_name",
+          "business_name",
+          "inspection_date"
+        ],
+        "properties": {
+          "inspector_id": {
+            "type": "string"
+          },
+          "inspector_name": {
+            "type": "string"
+          },
+          "department": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "district": {
+            "type": "string"
+          },
+          "premises_id": {
+            "type": "string"
+          },
+          "business_id": {
+            "type": "string"
+          },
+          "business_name": {
+            "type": "string"
+          },
+          "inspection_type": {
+            "type": "string"
+          },
+          "inspection_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "inspection_time": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "remarks": {
+            "type": "string"
+          }
+        }
+      },
+      "Inspection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/InspectionCreate"
+          },
+          {
+            "type": "object",
+            "required": [
+              "inspection_id",
+              "status"
+            ],
+            "properties": {
+              "inspection_id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "Product": {
+        "type": "object",
+        "required": [
+          "product_name",
+          "category",
+          "is_prepackaged"
+        ],
+        "properties": {
+          "product_name": {
+            "type": "string"
+          },
+          "brand": {
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "packer": {
+            "type": "string"
+          },
+          "importer": {
+            "type": "string"
+          },
+          "country_of_origin": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "subcategory": {
+            "type": "string"
+          },
+          "is_prepackaged": {
+            "type": "boolean"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "quantity_unit": {
+            "type": "string"
+          },
+          "quantity_type": {
+            "type": "string"
+          },
+          "manufacturing_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "packing_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "best_before": {
+            "type": "string",
+            "format": "date"
+          },
+          "use_by": {
+            "type": "string",
+            "format": "date"
+          },
+          "imported": {
+            "type": "boolean"
+          },
+          "ecommerce": {
+            "type": "boolean"
+          },
+          "barcode": {
+            "type": "string"
+          },
+          "qr_code": {
+            "type": "string"
+          },
+          "source_listing_url": {
+            "type": "string"
+          },
+          "electronic_product": {
+            "type": "boolean"
+          },
+          "food": {
+            "type": "boolean"
+          },
+          "cosmetic": {
+            "type": "boolean"
+          },
+          "may_become_unfit": {
+            "type": "boolean"
+          },
+          "combination_package": {
+            "type": "boolean"
+          },
+          "group_package": {
+            "type": "boolean"
+          },
+          "multi_piece_package": {
+            "type": "boolean"
+          },
+          "package_qr_notice_present": {
+            "type": "boolean"
+          },
+          "country_of_origin_filter": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AnalyzeRequest": {
+        "type": "object",
+        "required": [
+          "product"
+        ],
+        "properties": {
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "as_of_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "scoring_policy_code": {
+            "type": "string"
+          },
+          "scoring_policy_version": {
+            "type": "string"
+          }
+        }
+      },
+      "Rule": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "rule_number",
+          "title",
+          "field",
+          "check_type",
+          "requirement",
+          "source_reference"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string"
+          },
+          "rule_number": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "check_type": {
+            "type": "string"
+          },
+          "mandatory_default": {
+            "type": "boolean"
+          },
+          "requirement": {
+            "type": "string"
+          },
+          "source_reference": {
+            "type": "string"
+          }
+        }
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "status",
+          "requirement",
+          "evidence",
+          "explanation"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "NEEDS_REVIEW",
+              "NOT_APPLICABLE"
+            ]
+          },
+          "requirement": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "object"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "source_reference": {
+            "type": "string"
+          },
+          "legal_version": {
+            "type": "object"
+          },
+          "applicability": {
+            "type": "object"
+          }
+        }
+      },
+      "Verification": {
+        "type": "object",
+        "required": [
+          "decision",
+          "inspector_id"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "CONFIRMED",
+              "REJECTED",
+              "REQUIRES_REVIEW"
+            ]
+          },
+          "inspector_id": {
+            "type": "string"
+          },
+          "verification_notes": {
+            "type": "string"
+          },
+          "evidence_confirmed": {
+            "type": "boolean"
+          },
+          "legal_basis_reviewed": {
+            "type": "boolean"
+          },
+          "action_recommended": {
+            "type": "string"
+          }
+        }
+      },
+      "Score": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "out_of": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "policy": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "finalizable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AnalysisResponse": {
+        "type": "object",
+        "required": [
+          "inspection_id",
+          "product_id",
+          "status",
+          "score",
+          "findings",
+          "recommendations",
+          "engine"
+        ],
+        "properties": {
+          "inspection_id": {
+            "type": "string"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "score": {
+            "$ref": "#/components/schemas/Score"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "recommendations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "engine": {
+            "type": "object"
+          }
+        }
+      },
+      "FinalReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AnalysisResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "report_id": {
+                "type": "string"
+              },
+              "generated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "report_version": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

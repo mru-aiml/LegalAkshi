@@ -1,0 +1,166 @@
+{
+  "_label": "DEMO / TEST DATA ONLY \u2014 not verified law. Product declarations for development of the LegalAkshi pipeline. Legal requirements come from PostgreSQL, never from this file.",
+  "cases": [
+    {
+      "id": "CASE-A",
+      "title": "Compliant basic domestic product",
+      "inspection": {
+        "inspector_id": "DEMO-1",
+        "inspector_name": "Demo Officer",
+        "business_name": "Demo Store",
+        "inspection_date": "2026-09-15"
+      },
+      "product": {
+        "product_name": "Demo Whole Wheat Atta",
+        "category": "GENERAL",
+        "is_prepackaged": true,
+        "brand": "Demo",
+        "manufacturer": "Demo Foods Ltd, Kolkata",
+        "quantity": 5,
+        "quantity_unit": "kg",
+        "quantity_type": "weight",
+        "manufacturing_date": "2024-05-01",
+        "mrp": 250,
+        "consumer_care": "1800-000-000",
+        "imported": false,
+        "ecommerce": false,
+        "unit_sale_price": "Rs.50 per kg"
+      },
+      "expect": {
+        "CHK-MRP": "PASS",
+        "CHK-MANUFACTURER": "PASS",
+        "CHK-COMMON-NAME": "PASS",
+        "CHK-NET-QTY": "PASS",
+        "CHK-MFG-DATE": "PASS",
+        "violations": 0
+      }
+    },
+    {
+      "id": "CASE-B",
+      "title": "Missing MRP -> FAIL -> potential violation",
+      "inspection": {
+        "inspector_id": "DEMO-1",
+        "inspector_name": "Demo Officer",
+        "business_name": "Demo Store",
+        "inspection_date": "2026-09-15"
+      },
+      "product": {
+        "product_name": "Demo No-MRP Biscuits",
+        "category": "GENERAL",
+        "is_prepackaged": true,
+        "manufacturer": "Demo Foods Ltd",
+        "quantity": 200,
+        "quantity_unit": "g",
+        "quantity_type": "weight",
+        "manufacturing_date": "2024-05-01",
+        "consumer_care": "1800-000-000",
+        "imported": false,
+        "ecommerce": false,
+        "unit_sale_price": "Rs.50 per kg"
+      },
+      "expect": {
+        "CHK-MRP": "FAIL",
+        "violations": 1,
+        "violation_status": "PENDING"
+      }
+    },
+    {
+      "id": "CASE-C",
+      "title": "Imported product -> country-of-origin applicability",
+      "inspection": {
+        "inspector_id": "DEMO-1",
+        "inspector_name": "Demo Officer",
+        "business_name": "Demo Imports",
+        "inspection_date": "2026-09-15"
+      },
+      "product": {
+        "product_name": "Demo Thai Shampoo",
+        "category": "COSMETIC",
+        "subcategory": "SHAMPOO",
+        "is_prepackaged": true,
+        "manufacturer": "Demo Cosmetics",
+        "importer": "Demo Imports Pvt Ltd",
+        "quantity": 200,
+        "quantity_unit": "ml",
+        "quantity_type": "volume",
+        "manufacturing_date": "2024-05-01",
+        "mrp": 199,
+        "consumer_care": "1800-000-000",
+        "imported": true,
+        "ecommerce": false,
+        "unit_sale_price": "Rs.50 per kg"
+      },
+      "expect": {
+        "CHK-COUNTRY-ORIGIN": "FAIL"
+      }
+    },
+    {
+      "id": "CASE-D",
+      "title": "E-commerce imported product -> additional applicability",
+      "inspection": {
+        "inspector_id": "DEMO-1",
+        "inspector_name": "Demo Officer",
+        "business_name": "Demo E-Store",
+        "inspection_date": "2026-09-15",
+        "inspection_type": "ECOMMERCE_LISTING"
+      },
+      "product": {
+        "product_name": "Demo Imported Oats",
+        "category": "GENERAL",
+        "is_prepackaged": true,
+        "manufacturer": "Demo Foods",
+        "country_of_origin": "UAE",
+        "quantity": 500,
+        "quantity_unit": "g",
+        "quantity_type": "weight",
+        "manufacturing_date": "2024-05-01",
+        "mrp": 150,
+        "consumer_care": "1800-000-000",
+        "imported": true,
+        "ecommerce": true,
+        "source_listing_url": "https://example.invalid/listing/1",
+        "unit_sale_price": "Rs.50 per kg"
+      },
+      "expect": {
+        "CHK-ECOMMERCE-DECL": "PASS",
+        "CHK-ECOMMERCE-COO-FILTER": "FAIL"
+      }
+    },
+    {
+      "id": "CASE-E",
+      "title": "Low-confidence OCR case -> NEEDS_REVIEW",
+      "note": "OCR confidence 0.15 on MRP (measured, not assumed). Engine must route to inspector, never silent PASS/FAIL.",
+      "inspection": {
+        "inspector_id": "DEMO-1",
+        "inspector_name": "Demo Officer",
+        "business_name": "Demo Store",
+        "inspection_date": "2026-09-15"
+      },
+      "product": {
+        "product_name": "Demo Faded Label",
+        "category": "GENERAL",
+        "is_prepackaged": true,
+        "manufacturer": "Demo Foods Ltd",
+        "quantity": 1,
+        "quantity_unit": "kg",
+        "quantity_type": "weight",
+        "manufacturing_date": "2024-05-01",
+        "consumer_care": "1800-000-000",
+        "imported": false,
+        "ecommerce": false
+      },
+      "ocr_declarations": [
+        {
+          "field_name": "mrp",
+          "extracted_value": "250",
+          "confidence": 0.15,
+          "ocr_engine": "legalakshi-ocr-v1"
+        }
+      ],
+      "expect": {
+        "CHK-MRP": "NEEDS_REVIEW",
+        "finalizable": false
+      }
+    }
+  ]
+}
