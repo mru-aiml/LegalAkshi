@@ -4,6 +4,10 @@ from __future__ import annotations
 import os
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()  # backend/.env; real env vars take precedence
+
 TABLES = ["legal_sources", "legal_rules", "rule_versions", "rule_applicability",
           "engine_check_registry", "scoring_policies", "scoring_policy_weights",
           "inspections", "inspected_products", "inspection_evidence",

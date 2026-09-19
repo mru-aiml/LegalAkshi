@@ -3,6 +3,23 @@ uvicorn>=0.30
 psycopg[binary,pool]>=3.1
 pydantic>=2.7
 pydantic-settings>=2.3
+python-dotenv>=1.0
 python-multipart>=0.0.9
 pytest>=8.0
 httpx>=0.27
+jsonschema>=4.0
+pyyaml>=6.0
+fpdf2>=2.7.6
+pyjwt>=2.8
+cryptography>=44.0  # tests: RS256 round-trip; production JWKS via PyJWT
+# Real OCR (RapidOCR/ONNX CPU — no system binaries, no torch/paddle).
+# PaddleOCR rejected: ~1GB paddle dep, uncertain cp313/Windows support.
+# Tesseract rejected: no system binary available, fragile per-machine setup.
+rapidocr_onnxruntime>=1.2
+numpy>=1.26
+pillow>=10.0
+# Optional: wrapper for the Tesseract 5 system binary, used solely by the
+# hybrid ingredient fallback (RapidOCR stays primary). The binary itself
+# (UB-Mannheim Tesseract 5 + eng traineddata) must be installed separately;
+# when absent the provider degrades to RapidOCR-only at runtime.
+pytesseract>=0.3.10

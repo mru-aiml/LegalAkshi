@@ -78,6 +78,12 @@ def analyze(repo, inspection: dict, product: dict,
                 "ai_confidence": f["evidence"].get("confidence"),
             })
             violation_ids.append(v["violation_id"])
+            # Real event -> officer inbox (audience 'officer').
+            repo.create_notification({
+                "audience": "officer", "type": "violation_created",
+                "title": f"Potential violation: {f['rule_id']}",
+                "body": f["explanation"],
+                "link": f"/inspections/{inspection['inspection_id']}"})
 
     recommendations = [f"Inspector verification required before finalization."
                        for _ in [0] if summary["needs_review"]]
@@ -91,6 +97,13 @@ def analyze(repo, inspection: dict, product: dict,
                                   or product.get("inspected_product_id")),
                 "score": summary["value"], "findings": len(findings),
                 "violations": len(violation_ids)})
+    if summary["needs_review"]:
+        repo.create_notification({
+            "audience": "officer", "type": "review_required",
+            "title": "Inspection requires review",
+            "body": (f"{len(findings)} findings, {len(violation_ids)} potential "
+                     f"violation(s); score {summary['value']}."),
+            "link": f"/inspections/{inspection['inspection_id']}"})
     return {
         "inspection_id": inspection["inspection_id"],
         "product_id": product.get("product_id") or product.get("inspected_product_id"),

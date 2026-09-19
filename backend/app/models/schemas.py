@@ -54,6 +54,22 @@ class Product(BaseModel):
     multi_piece_package: bool = False
     package_qr_notice_present: Optional[bool] = None
     country_of_origin_filter: Optional[bool] = None
+    # Inspection context for physical vs online-listing compliance:
+    # PACKAGE_ONLY | ONLINE_LISTING | PACKAGE_AND_ONLINE_LISTING.
+    # Carried through existing declaration infrastructure (no DB migration);
+    # e-commerce checks REQUIRE online-listing evidence before any FAIL.
+    inspection_context: Optional[str] = None
+    online_listing_url: Optional[str] = None
+    online_listing_evidence: Optional[bool] = None
+    # Per-field provenance for reviewed declarations, keyed by ENGINE
+    # registry field names, e.g.
+    # {"mrp": {"ocr_engine": "rapidocr", "confidence": 0.94},
+    #  "manufacturer": {"ocr_engine": "rapidocr", "confidence": 0.91}}.
+    # Send meta ONLY for values identical to the OCR output (unedited).
+    # Absent/edited fields are stored as manual-entry with NULL confidence —
+    # never fabricated OCR values. Column-mapped fields get mirror
+    # declaration rows with the same reviewed value (server-side strings).
+    field_meta: Optional[dict[str, Any]] = None
 
     model_config = {"extra": "allow"}  # manual declarations (mrp, consumer_care…)
 
@@ -85,3 +101,16 @@ class Finding(BaseModel):
     source_reference: Optional[str] = None
     legal_version: Optional[dict[str, Any]] = None
     applicability: Optional[dict[str, Any]] = None
+
+
+class ComplaintCreate(BaseModel):
+    product_name: str = ""
+    retailer: str = ""
+    city: str = ""
+    severity: str = "Medium"
+    description: str = ""
+    reporter_id: Optional[str] = None
+    inspection_id: Optional[str] = None
+    violation_id: Optional[str] = None
+    evidence: Optional[list[Any]] = None
+    status: Optional[str] = None

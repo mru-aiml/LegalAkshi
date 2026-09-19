@@ -101,12 +101,30 @@ def test_verify_flow_confirm_and_reject(client: TestClient):
     bad.pop("mrp")
     vid = client.post(f"/api/v1/inspections/{iid}/analyze",
                       json={"product": bad}).json()["violation_ids"][0]
+    headers = {"X-LegalAkshi-Role": "officer", "X-LegalAkshi-User": "INSP-1"}
     r = client.post(f"/api/v1/violations/{vid}/verify",
-                    json={"decision": "CONFIRMED", "inspector_id": "INSP-1"})
+                    json={"decision": "CONFIRMED", "inspector_id": "INSP-1"},
+                    headers=headers)
     assert r.status_code == 200 and r.json()["inspector_status"] == "CONFIRMED"
     r = client.post(f"/api/v1/violations/{vid}/verify",
-                    json={"decision": "REJECTED", "inspector_id": "INSP-1"})
+                    json={"decision": "REJECTED", "inspector_id": "INSP-1"},
+                    headers=headers)
     assert r.json()["inspector_status"] == "REJECTED"
+
+
+def test_verify_requires_officer_role(client: TestClient):
+    iid = client.post("/api/v1/inspections", json=INSP).json()["inspection_id"]
+    bad = dict(PRODUCT)
+    bad.pop("mrp")
+    vid = client.post(f"/api/v1/inspections/{iid}/analyze",
+                      json={"product": bad}).json()["violation_ids"][0]
+    r = client.post(f"/api/v1/violations/{vid}/verify",
+                    json={"decision": "CONFIRMED", "inspector_id": "INSP-1"})
+    assert r.status_code == 401  # anonymous caller
+    r = client.post(f"/api/v1/violations/{vid}/verify",
+                    json={"decision": "CONFIRMED", "inspector_id": "INSP-1"},
+                    headers={"X-LegalAkshi-Role": "consumer"})
+    assert r.status_code == 403  # consumer cannot verify
 
 
 def test_verify_rejects_bad_decision(client: TestClient):
@@ -116,7 +134,8 @@ def test_verify_rejects_bad_decision(client: TestClient):
     vid = client.post(f"/api/v1/inspections/{iid}/analyze",
                       json={"product": bad}).json()["violation_ids"][0]
     r = client.post(f"/api/v1/violations/{vid}/verify",
-                    json={"decision": "GUILTY", "inspector_id": "INSP-1"})
+                    json={"decision": "GUILTY", "inspector_id": "INSP-1"},
+                    headers={"X-LegalAkshi-Role": "officer"})
     assert r.status_code == 422
 
 

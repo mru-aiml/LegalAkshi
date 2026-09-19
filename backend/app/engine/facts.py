@@ -48,11 +48,20 @@ PASSTHROUGH = {
     "genetically_modified", "combination_package", "group_package",
     "multi_piece_package", "package_qr_notice_present", "medical_device",
     "is_prepackaged", "quantity_unit",
+    # inspection context for physical vs online-listing compliance
+    # (PACKAGE_ONLY | ONLINE_LISTING | PACKAGE_AND_ONLINE_LISTING).
+    # Carried as declaration extras — no schema change required.
+    "inspection_context", "online_listing_url", "listing_url",
+    "online_listing_evidence", "ecommerce_evidence", "listing_screenshot",
+    "online_evidence",
     # registry fields supplied as manual/OCR declarations
     "mrp", "consumer_care", "gm_label", "veg_nonveg_dot", "unit_sale_price",
     "dimensions", "other_declarations", "common_generic_name", "mfg_month_year",
     "net_quantity", "manufacturer", "best_before", "country_of_origin",
     "ecommerce_declarations", "ecommerce_coo_filter", "qr_code",
+    # food-label extraction layer (informational; rule engine stays authoritative)
+    "fssai_license", "ingredients_raw", "veg_nonveg_symbol",
+    "nutrition_info", "brand_name", "variant_flavour",
 }
 
 
@@ -170,7 +179,9 @@ def _dt(value: Any) -> datetime | None:
         return datetime(value.year, value.month, value.day)
     text = str(value).strip()
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%Y", "%m-%Y", "%Y/%m",
-                "%b %Y", "%B %Y", "%d-%m-%Y"):
+                "%b %Y", "%B %Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y",
+                "%d-%b-%Y", "%d-%B-%Y", "%Y-%m", "%m.%Y", "%d.%m.%Y",
+                "%b-%Y", "%B-%Y", "%d %b %y", "%d %B %y"):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:

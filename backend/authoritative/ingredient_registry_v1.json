@@ -1,0 +1,30 @@
+{
+  "$schema": "legalakshi/ingredient-registry/v1",
+  "registry_id": "ING-REG-2026-V1",
+  "version": "1.0.0",
+  "effective_date": "2026-09-16",
+  "description": "Configuration-driven legal ingredient registry. A NO-PROHIBITION-BY-DEFAULT list: an ingredient is PROHIBITED only when an authoritative rule entry explicitly says so. Unknown ingredients are UNKNOWN ('No configured rule found') — never illegal. Additive/use-condition entries are NEEDS_REVIEW pending verification against the applicable FSS additive regulation.",
+  "entries": [
+    {"name": "wheat flour", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "refined wheat flour", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "maida", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "salt", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "sugar", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "water", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "edible vegetable oil", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "palm oil", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "milk powder", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "wheat gluten", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "spices", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "mixed herbs", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "tomato powder", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "onion powder", "status": "ALLOWED", "reason": "Common food ingredient; no configured restriction.", "source": "LegalAkshi ingredient registry v1 (curated common ingredients)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "added flavour", "status": "NEEDS_REVIEW", "reason": "Flavouring substances require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "preservative", "status": "NEEDS_REVIEW", "reason": "Preservatives require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "colour", "status": "NEEDS_REVIEW", "reason": "Added colours require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "emulsifier", "status": "NEEDS_REVIEW", "reason": "Emulsifiers require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "stabilizer", "status": "NEEDS_REVIEW", "reason": "Stabilizers require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "antioxidant", "status": "NEEDS_REVIEW", "reason": "Antioxidants require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"},
+    {"name": "sweetener", "status": "NEEDS_REVIEW", "reason": "Sweeteners require verification against the applicable food additive/use-condition rule.", "source": "LegalAkshi ingredient registry v1 (additive class rule)", "version": "1.0.0", "effective_date": "2026-09-16"}
+  ]
+}

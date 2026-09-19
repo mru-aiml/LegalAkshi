@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: legalakshi-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-legalakshi-dev-only}
+      POSTGRES_DB: legalakshi
+    ports:
+      - "5432:5432"
+    volumes:
+      - legalakshi-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d legalakshi"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  legalakshi-pgdata:

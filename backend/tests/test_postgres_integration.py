@@ -14,6 +14,9 @@ import os
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 SCHEMA_PATH = (Path(__file__).resolve().parent.parent
                / "legalakshi_schema_v3_final.sql")
@@ -120,3 +123,27 @@ def test_postgres_rejects_overlapping_versions():
                           'IN_FORCE', check_id
                    FROM rule_versions
                    WHERE rule_version_id = '55555555-5555-5555-5555-555555550030'""")
+
+
+@needs_pg
+def test_postgres_complaint_lifecycle_persists():
+    """Consumer intake tables (migrations/) work on real PostgreSQL:
+    create -> SUBMITTED -> ACKNOWLEDGED with timeline rows."""
+    from app.repositories.postgres import PostgresRepo
+
+    dsn = _dsn()
+    repo = PostgresRepo(dsn)
+    created = repo.create_complaint({
+        "reporter_id": "PG-TESTER", "product_name": "PG Test Pack",
+        "retailer": "PG Store", "city": "PG City", "severity": "Medium",
+        "description": "integration probe (clearly labeled test data)",
+        "evidence": []})
+    assert created["status"] == "SUBMITTED"
+    cid = created["complaint_id"]
+    assert repo.get_complaint(cid)["status"] == "SUBMITTED"
+    moved = repo.transition_complaint(cid, "ACKNOWLEDGED", "PG-1", "seen")
+    assert moved and moved["status"] == "ACKNOWLEDGED"
+    events = repo.complaint_timeline(cid)
+    assert [e["event_type"] for e in events] == ["CREATED", "STATUS_CHANGE"]
+    with pytest.raises(ValueError):
+        repo.transition_complaint(cid, "RESOLVED", "PG-1")  # illegal jump"")

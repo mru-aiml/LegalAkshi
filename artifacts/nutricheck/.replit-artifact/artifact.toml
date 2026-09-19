@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "NutriCheck"
+description = "A production-quality web app that helps Indian consumers verify packaged product labels against Legal Metrology and FSSAI requirements, and gives inspection officers a shared enforcement workspace."
+version = "1.0.0"
+id = "artifacts/nutricheck"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21361
+
+[services.development]
+run = "pnpm --filter @workspace/nutricheck run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/nutricheck", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/nutricheck/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21361"
+BASE_PATH = "/"

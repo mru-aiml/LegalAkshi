@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.core.auth import Principal, require_roles
 from app.models.schemas import Verification
 from app.repositories.base import Repo
 
@@ -30,7 +31,8 @@ def list_violations(inspection_id: str, request: Request):
 
 
 @router.post("/violations/{violation_id}/verify")
-def verify_violation(violation_id: str, body: Verification, request: Request):
+def verify_violation(violation_id: str, body: Verification, request: Request,
+                     principal: Principal = Depends(require_roles("officer"))):
     repo = _repo(request)
     try:
         uuid.UUID(violation_id)

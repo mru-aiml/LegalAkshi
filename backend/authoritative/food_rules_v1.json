@@ -1,0 +1,53 @@
+{
+  "$schema": "legalakshi/food-rules/v1",
+  "version": "1.0.0",
+  "effective_date": "2026-09-16",
+  "description": "FOOD-specific rule specifications for the authoritative rule architecture. These are SPECIFICATIONS only — they are NOT auto-applied. An admin adds them through the existing rule-sync / registry-insert path (repo.insert_registry_entry / insert_rule_version / insert_applicability), which keeps the seeded LMPC Rule 6 history immutable. The existing cosmetic CHK-VEG-NONVEG rule is never overwritten; food products use CHK-VEG-NONVEG-FOOD instead.",
+  "checks": [
+    {
+      "check_id": "CHK-VEG-NONVEG-FOOD",
+      "title": "Veg / Non-Veg Declaration (Food)",
+      "field_name": "veg_nonveg_dot",
+      "check_type": "CONDITIONAL_FIELD_PRESENT",
+      "mandatory_default": false,
+      "scoring_category": "VEG_NONVEG_FOOD",
+      "requirement": "Vegetarian/non-vegetarian declaration for food products.",
+      "rule_number": "6",
+      "sub_rule": "8-food",
+      "clause": null,
+      "when": {"eq": true, "field": "food"},
+      "weight": 0,
+      "severity": "MEDIUM"
+    },
+    {
+      "check_id": "CHK-FSSAI-LIC",
+      "title": "FSSAI Licence Declaration (Food)",
+      "field_name": "fssai_license",
+      "check_type": "CONDITIONAL_FIELD_PRESENT",
+      "mandatory_default": false,
+      "scoring_category": "FSSAI",
+      "requirement": "FSSAI licence number declaration for food products.",
+      "rule_number": "6",
+      "sub_rule": "1-food",
+      "clause": null,
+      "when": {"eq": true, "field": "food"},
+      "weight": 0,
+      "severity": "MEDIUM"
+    },
+    {
+      "check_id": "CHK-INGREDIENT-SCREEN",
+      "title": "Ingredient Screening (Food)",
+      "field_name": "ingredients_raw",
+      "check_type": "INGREDIENT_SCREEN",
+      "mandatory_default": false,
+      "scoring_category": "INGREDIENTS",
+      "requirement": "Ingredient list screening against the configured ingredient registry (advisory; inspector decides).",
+      "rule_number": "6",
+      "sub_rule": "1-food",
+      "clause": null,
+      "when": {"eq": true, "field": "food"},
+      "weight": 0,
+      "severity": "LOW"
+    }
+  ]
+}

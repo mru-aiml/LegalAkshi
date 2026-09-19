@@ -1,0 +1,1200 @@
+{
+ "tesseract_required": "Tesseract 5 LSTM --oem 1 + eng",
+ "crops": {
+  "full_back": {
+   "crop_size": [
+    1600,
+    1200
+   ],
+   "psms": [
+    6
+   ],
+   "rapidocr": {
+    "engine": "rapidocr",
+    "side": "bench:full_back",
+    "ms": 7759.1,
+    "raw_text": "INGREDIENTS: Refined Wheat Flour (Maida) (70%), Palm Oil,\nSalt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(ii)) and Humectant (E451).\nNutrition Information per 100g: Energy 450 kcal,\nProtein 8 g, Total Fat 15 g, Sodium 900 mg.\nMRP Rs. 50 (lncl. of all taxes)\nMFD 05/2024 Best Before 9 months from manufacture\nFSSAI Lic No. 10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947",
+    "lines": [
+     {
+      "text": "INGREDIENTS: Refined Wheat Flour (Maida) (70%), Palm Oil,",
+      "confidence": 0.909,
+      "box": [
+       [
+        60.0,
+        54.0
+       ],
+       [
+        893.0,
+        55.0
+       ],
+       [
+        893.0,
+        82.0
+       ],
+       [
+        60.0,
+        81.0
+       ]
+      ]
+     },
+     {
+      "text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators",
+      "confidence": 0.887,
+      "box": [
+       [
+        60.0,
+        149.0
+       ],
+       [
+        762.0,
+        150.0
+       ],
+       [
+        762.0,
+        180.0
+       ],
+       [
+        60.0,
+        179.0
+       ]
+      ]
+     },
+     {
+      "text": "(INS 500(ii)) and Humectant (E451).",
+      "confidence": 0.902,
+      "box": [
+       [
+        63.0,
+        245.0
+       ],
+       [
+        540.0,
+        245.0
+       ],
+       [
+        540.0,
+        274.0
+       ],
+       [
+        63.0,
+        274.0
+       ]
+      ]
+     },
+     {
+      "text": "Nutrition Information per 100g: Energy 450 kcal,",
+      "confidence": 0.895,
+      "box": [
+       [
+        59.0,
+        337.0
+       ],
+       [
+        699.0,
+        340.0
+       ],
+       [
+        699.0,
+        369.0
+       ],
+       [
+        59.0,
+        367.0
+       ]
+      ]
+     },
+     {
+      "text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.",
+      "confidence": 0.918,
+      "box": [
+       [
+        60.0,
+        432.0
+       ],
+       [
+        639.0,
+        435.0
+       ],
+       [
+        639.0,
+        465.0
+       ],
+       [
+        60.0,
+        462.0
+       ]
+      ]
+     },
+     {
+      "text": "MRP Rs. 50 (lncl. of all taxes)",
+      "confidence": 0.863,
+      "box": [
+       [
+        60.0,
+        528.0
+       ],
+       [
+        456.0,
+        530.0
+       ],
+       [
+        456.0,
+        560.0
+       ],
+       [
+        60.0,
+        558.0
+       ]
+      ]
+     },
+     {
+      "text": "MFD 05/2024 Best Before 9 months from manufacture",
+      "confidence": 0.913,
+      "box": [
+       [
+        60.0,
+        624.0
+       ],
+       [
+        799.0,
+        625.0
+       ],
+       [
+        799.0,
+        651.0
+       ],
+       [
+        60.0,
+        650.0
+       ]
+      ]
+     },
+     {
+      "text": "FSSAI Lic No. 10012043001234",
+      "confidence": 0.897,
+      "box": [
+       [
+        61.0,
+        718.0
+       ],
+       [
+        493.0,
+        718.0
+       ],
+       [
+        493.0,
+        744.0
+       ],
+       [
+        61.0,
+        744.0
+       ]
+      ]
+     },
+     {
+      "text": "Mfd. by Nestle India Limited, Moga, Punjab 142001",
+      "confidence": 0.878,
+      "box": [
+       [
+        60.0,
+        814.0
+       ],
+       [
+        742.0,
+        813.0
+       ],
+       [
+        742.0,
+        843.0
+       ],
+       [
+        60.0,
+        844.0
+       ]
+      ]
+     },
+     {
+      "text": "Customer Care 1800-103-1947",
+      "confidence": 0.923,
+      "box": [
+       [
+        61.0,
+        910.0
+       ],
+       [
+        478.0,
+        908.0
+       ],
+       [
+        478.0,
+        934.0
+       ],
+       [
+        61.0,
+        937.0
+       ]
+      ]
+     }
+    ],
+    "mean_confidence": 0.898,
+    "coherence": {
+     "score": 0.655,
+     "reasons": [
+      "alpha-word ratio 0.75",
+      "vocabulary-hit ratio 0.29",
+      "INS/additive tokens 2",
+      "mean OCR confidence 0.90"
+     ]
+    }
+   },
+   "tesseract": [
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1698.7,
+     "raw_text": "INGREDIENTS: Refined Wheat Flour (Maida) (70%), Palm Oil,\nSalt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(ii)) and Humectant (E451).\n\nNutrition Information per 100g: Energy 450 kcal,\n\nProtein 8 g, Total Fat 15 g, Sodium 900 mg.\n\nMRP Rs. 50 (Incl. of all taxes)\n\nMFD 05/2024 Best Before 9 months from manufacture\n\nFSSAI Lic No. 10012043001234\n\nMfd. by Nestle India Limited, Moga, Punjab 142001\n\nCustomer Care 1800-103-1947\n",
+     "error": null
+    }
+   ]
+  },
+  "ingredients": {
+   "crop_size": [
+    1600,
+    253
+   ],
+   "psms": [
+    6,
+    11,
+    12
+   ],
+   "rapidocr": {
+    "engine": "rapidocr",
+    "side": "bench:ingredients",
+    "ms": 4982.0,
+    "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(i)) and Humectant (E451)",
+    "lines": [
+     {
+      "text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators",
+      "confidence": 0.919,
+      "box": [
+       [
+        60.0,
+        66.0
+       ],
+       [
+        763.0,
+        67.0
+       ],
+       [
+        763.0,
+        97.0
+       ],
+       [
+        60.0,
+        96.0
+       ]
+      ]
+     },
+     {
+      "text": "(INS 500(i)) and Humectant (E451)",
+      "confidence": 0.874,
+      "box": [
+       [
+        61.0,
+        161.0
+       ],
+       [
+        540.0,
+        162.0
+       ],
+       [
+        540.0,
+        191.0
+       ],
+       [
+        61.0,
+        190.0
+       ]
+      ]
+     }
+    ],
+    "mean_confidence": 0.897,
+    "coherence": {
+     "score": 0.769,
+     "reasons": [
+      "alpha-word ratio 0.75",
+      "vocabulary-hit ratio 0.67",
+      "INS/additive tokens 2",
+      "mean OCR confidence 0.90"
+     ]
+    }
+   },
+   "tesseract": [
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 984.3,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 874.1,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 12,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1738.9,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "gray-contrast",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 927.5,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "gray-contrast",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 893.3,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 12,
+     "prep": "gray-contrast",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1538.5,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 783.9,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(ii)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 786.6,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(i/)) and Humectant (E451).\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 12,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1550.6,
+     "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n\n(INS 500(i/)) and Humectant (E451).\n",
+     "error": null
+    }
+   ]
+  },
+  "mrp": {
+   "crop_size": [
+    1600,
+    540
+   ],
+   "psms": [
+    6,
+    11
+   ],
+   "rapidocr": {
+    "engine": "rapidocr",
+    "side": "bench:mrp",
+    "ms": 3500.2,
+    "raw_text": "FSSAlLicNo.10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947",
+    "lines": [
+     {
+      "text": "FSSAlLicNo.10012043001234",
+      "confidence": 0.884,
+      "box": [
+       [
+        62.0,
+        62.0
+       ],
+       [
+        492.0,
+        62.0
+       ],
+       [
+        492.0,
+        84.0
+       ],
+       [
+        62.0,
+        84.0
+       ]
+      ]
+     },
+     {
+      "text": "Mfd. by Nestle India Limited, Moga, Punjab 142001",
+      "confidence": 0.896,
+      "box": [
+       [
+        61.0,
+        156.0
+       ],
+       [
+        743.0,
+        156.0
+       ],
+       [
+        743.0,
+        184.0
+       ],
+       [
+        61.0,
+        184.0
+       ]
+      ]
+     },
+     {
+      "text": "Customer Care 1800-103-1947",
+      "confidence": 0.87,
+      "box": [
+       [
+        62.0,
+        251.0
+       ],
+       [
+        477.0,
+        251.0
+       ],
+       [
+        477.0,
+        275.0
+       ],
+       [
+        62.0,
+        275.0
+       ]
+      ]
+     }
+    ],
+    "mean_confidence": 0.883,
+    "coherence": {
+     "score": 0.487,
+     "reasons": [
+      "alpha-word ratio 0.75",
+      "vocabulary-hit ratio 0.00",
+      "mean OCR confidence 0.88"
+     ]
+    }
+   },
+   "tesseract": [
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1081.5,
+     "raw_text": "FSSAI Lic No. 10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1011.3,
+     "raw_text": "FSSAI Lic No. 10012043001234\n\nMfd. by Nestle India Limited, Moga, Punjab 142001\n\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 973.6,
+     "raw_text": "FSSAI Lic No. 10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1004.6,
+     "raw_text": "FSSAI Lic No. 10012043001234\n\nMfd. by Nestle India Limited, Moga, Punjab 142001\n\nCustomer Care 1800-103-1947\n",
+     "error": null
+    }
+   ]
+  },
+  "nutrition": {
+   "crop_size": [
+    1600,
+    360
+   ],
+   "psms": [
+    6,
+    11
+   ],
+   "rapidocr": {
+    "engine": "rapidocr",
+    "side": "bench:nutrition",
+    "ms": 5250.5,
+    "raw_text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.\nMRP Rs. 50 (Incl. of all taxes)\nMFD05/2024\nBest Before 9 months from manufacture",
+    "lines": [
+     {
+      "text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.",
+      "confidence": 0.91,
+      "box": [
+       [
+        59.0,
+        62.0
+       ],
+       [
+        639.0,
+        65.0
+       ],
+       [
+        639.0,
+        95.0
+       ],
+       [
+        59.0,
+        92.0
+       ]
+      ]
+     },
+     {
+      "text": "MRP Rs. 50 (Incl. of all taxes)",
+      "confidence": 0.888,
+      "box": [
+       [
+        60.0,
+        158.0
+       ],
+       [
+        455.0,
+        161.0
+       ],
+       [
+        455.0,
+        187.0
+       ],
+       [
+        60.0,
+        185.0
+       ]
+      ]
+     },
+     {
+      "text": "MFD05/2024",
+      "confidence": 0.821,
+      "box": [
+       [
+        62.0,
+        256.0
+       ],
+       [
+        241.0,
+        256.0
+       ],
+       [
+        241.0,
+        279.0
+       ],
+       [
+        62.0,
+        279.0
+       ]
+      ]
+     },
+     {
+      "text": "Best Before 9 months from manufacture",
+      "confidence": 0.901,
+      "box": [
+       [
+        268.0,
+        256.0
+       ],
+       [
+        798.0,
+        257.0
+       ],
+       [
+        798.0,
+        279.0
+       ],
+       [
+        268.0,
+        279.0
+       ]
+      ]
+     }
+    ],
+    "mean_confidence": 0.88,
+    "coherence": {
+     "score": 0.454,
+     "reasons": [
+      "alpha-word ratio 0.67",
+      "impossible-sequence ratio 0.04",
+      "vocabulary-hit ratio 0.07",
+      "mean OCR confidence 0.88"
+     ]
+    }
+   },
+   "tesseract": [
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1078.9,
+     "raw_text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.\nMRP Rs. 50 (Incl. of all taxes)\nMFD 05/2024 Best Before 9 months from manufacture\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1099.1,
+     "raw_text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.\n\nMRP Rs. 50 (Incl. of all taxes)\n\nMFD 05/2024 Best Before 9 months from manufacture\n\nKRA AIL. AIL ANNANNANNNHANDA\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 903.6,
+     "raw_text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.\nMRP Rs. 50 (Incl. of all taxes)\nMFD 05/2024 Best Before 9 months from manufacture\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1034.8,
+     "raw_text": "Protein 8 g, Total Fat 15 g, Sodium 900 mg.\n\nMRP Rs. 50 (Incl. of all taxes)\n\nMFD 05/2024 Best Before 9 months from manufacture\n\nFARAII:\u2018. AI, 4A4RARARNAANNARAA\n",
+     "error": null
+    }
+   ]
+  },
+  "care": {
+   "crop_size": [
+    1600,
+    540
+   ],
+   "psms": [
+    6,
+    11
+   ],
+   "rapidocr": {
+    "engine": "rapidocr",
+    "side": "bench:care",
+    "ms": 2165.8,
+    "raw_text": "FSSAlLicNo.10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947",
+    "lines": [
+     {
+      "text": "FSSAlLicNo.10012043001234",
+      "confidence": 0.884,
+      "box": [
+       [
+        62.0,
+        62.0
+       ],
+       [
+        492.0,
+        62.0
+       ],
+       [
+        492.0,
+        84.0
+       ],
+       [
+        62.0,
+        84.0
+       ]
+      ]
+     },
+     {
+      "text": "Mfd. by Nestle India Limited, Moga, Punjab 142001",
+      "confidence": 0.896,
+      "box": [
+       [
+        61.0,
+        156.0
+       ],
+       [
+        743.0,
+        156.0
+       ],
+       [
+        743.0,
+        184.0
+       ],
+       [
+        61.0,
+        184.0
+       ]
+      ]
+     },
+     {
+      "text": "Customer Care 1800-103-1947",
+      "confidence": 0.87,
+      "box": [
+       [
+        62.0,
+        251.0
+       ],
+       [
+        477.0,
+        251.0
+       ],
+       [
+        477.0,
+        275.0
+       ],
+       [
+        62.0,
+        275.0
+       ]
+      ]
+     }
+    ],
+    "mean_confidence": 0.883,
+    "coherence": {
+     "score": 0.487,
+     "reasons": [
+      "alpha-word ratio 0.75",
+      "vocabulary-hit ratio 0.00",
+      "mean OCR confidence 0.88"
+     ]
+    }
+   },
+   "tesseract": [
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 976.9,
+     "raw_text": "FSSAI Lic No. 10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "orig",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 948.4,
+     "raw_text": "FSSAI Lic No. 10012043001234\n\nMfd. by Nestle India Limited, Moga, Punjab 142001\n\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 6,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 1058.8,
+     "raw_text": "FSSAI Lic No. 10012043001234\nMfd. by Nestle India Limited, Moga, Punjab 142001\nCustomer Care 1800-103-1947\n",
+     "error": null
+    },
+    {
+     "engine": "tesseract",
+     "psm": 11,
+     "prep": "otsu-thresh",
+     "oem": 1,
+     "lang": "eng",
+     "ms": 995.9,
+     "raw_text": "FSSAI Lic No. 10012043001234\n\nMfd. by Nestle India Limited, Moga, Punjab 142001\n\nCustomer Care 1800-103-1947\n",
+     "error": null
+    }
+   ]
+  }
+ },
+ "timings": {
+  "rapidocr_model_load_ms": 2040.4,
+  "stage1_ms": 9564.3,
+  "rapidocr_crops_ms": 23657.6,
+  "rapidocr_only_ms": 33221.9,
+  "rapidocr_plus_tess_fallback_ms": 33221.9,
+  "fallback_would_run": false
+ },
+ "fixtures": {
+  "note": "Repo holds no real Maggi photos; deterministic synthetic Maggi-70g front/back panels rendered in-script.",
+  "font": "truetype:C:/Windows/Fonts/arial.ttf",
+  "front_bytes": 20243,
+  "back_bytes": 85189
+ },
+ "tesseract_version": "5.4.0.20240606",
+ "tesseract_available": true,
+ "crop_token_recall": {
+  "ingredients": {
+   "keys": [
+    "salt",
+    "sugar",
+    "mixed spices",
+    "(0.5%)",
+    "acidity regulators",
+    "ins 500",
+    "(ii)",
+    "humectant",
+    "e451"
+   ],
+   "rapidocr_hits": 8,
+   "rapidocr_recall": 0.889,
+   "tesseract_hits": 9,
+   "tesseract_recall": 1.0,
+   "tesseract_cfg": "psm6/orig"
+  },
+  "mrp": {
+   "keys": [
+    "mrp",
+    "rs",
+    "50",
+    "incl",
+    "taxes",
+    "mfd",
+    "05/2024"
+   ],
+   "rapidocr_hits": 1,
+   "rapidocr_recall": 0.143,
+   "tesseract_hits": 1,
+   "tesseract_recall": 0.143,
+   "tesseract_cfg": "psm6/orig"
+  },
+  "nutrition": {
+   "keys": [
+    "nutrition",
+    "energy",
+    "450",
+    "protein",
+    "fat",
+    "sodium"
+   ],
+   "rapidocr_hits": 3,
+   "rapidocr_recall": 0.5,
+   "tesseract_hits": 3,
+   "tesseract_recall": 0.5,
+   "tesseract_cfg": "psm6/orig"
+  },
+  "care": {
+   "keys": [
+    "fssai",
+    "10012043001234",
+    "customer",
+    "care",
+    "1800-103-1947",
+    "nestle",
+    "moga"
+   ],
+   "rapidocr_hits": 6,
+   "rapidocr_recall": 0.857,
+   "tesseract_hits": 7,
+   "tesseract_recall": 1.0,
+   "tesseract_cfg": "psm6/orig"
+  },
+  "full_back": {
+   "keys": [
+    "ingredients",
+    "refined wheat flour",
+    "mrp",
+    "rs",
+    "50",
+    "mfd",
+    "fssai",
+    "nutrition",
+    "energy"
+   ],
+   "rapidocr_hits": 9,
+   "rapidocr_recall": 1.0,
+   "tesseract_hits": 9,
+   "tesseract_recall": 1.0,
+   "tesseract_cfg": "psm6/orig"
+  }
+ },
+ "ingredient_comparison": {
+  "expected": "Refined Wheat Flour (Maida) (70%), Palm Oil, Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators (INS 500(ii)) and Humectant (E451).",
+  "rapidocr": {
+   "score": {
+    "char_similarity": 0.785,
+    "token_recall": 0.619,
+    "token_precision": 0.929,
+    "probes": {
+     "ingredients": false,
+     "refined wheat flour": false,
+     "(maida)": false,
+     "(70%)": false,
+     "palm oil": false,
+     "salt": true,
+     "sugar": true,
+     "mixed spices": true,
+     "(0.5%)": true,
+     "acidity regulators": true,
+     "ins 500": true,
+     "(ii)": false,
+     "humectant": true,
+     "e451": true
+    },
+    "probes_hit": 8,
+    "probes_total": 14,
+    "ins_recall": 0.8,
+    "ins_hits": {
+     "ins 500": true,
+     "(ii)": false,
+     "e451": true,
+     "acidity": true,
+     "humectant": true
+    },
+    "ordering_preserved": true,
+    "missing_words": [
+     "ingredients",
+     "refined wheat flour",
+     "(maida)",
+     "(70%)",
+     "palm oil",
+     "(ii)"
+    ],
+    "merged_words": []
+   },
+   "incrop": {
+    "char_similarity": 0.989,
+    "token_recall": 0.929,
+    "token_precision": 0.929,
+    "probes": {
+     "salt": true,
+     "sugar": true,
+     "mixed spices": true,
+     "(0.5%)": true,
+     "acidity regulators": true,
+     "ins 500": true,
+     "(ii)": false,
+     "humectant": true,
+     "e451": true
+    },
+    "probes_hit": 8,
+    "probes_total": 9,
+    "ins_recall": 0.8,
+    "ins_hits": {
+     "ins 500": true,
+     "(ii)": false,
+     "e451": true,
+     "acidity": true,
+     "humectant": true
+    },
+    "ordering_preserved": true,
+    "missing_words": [
+     "(ii)"
+    ],
+    "merged_words": []
+   },
+   "coherence": {
+    "score": 0.769,
+    "reasons": [
+     "alpha-word ratio 0.75",
+     "vocabulary-hit ratio 0.67",
+     "INS/additive tokens 2",
+     "mean OCR confidence 0.90"
+    ]
+   },
+   "ms": 4982.0,
+   "fair_coherence": 0.635
+  },
+  "tesseract_best": {
+   "cfg": "psm6/orig",
+   "ms": 984.3,
+   "score": {
+    "char_similarity": 0.796,
+    "token_recall": 0.667,
+    "token_precision": 1.0,
+    "probes": {
+     "ingredients": false,
+     "refined wheat flour": false,
+     "(maida)": false,
+     "(70%)": false,
+     "palm oil": false,
+     "salt": true,
+     "sugar": true,
+     "mixed spices": true,
+     "(0.5%)": true,
+     "acidity regulators": true,
+     "ins 500": true,
+     "(ii)": true,
+     "humectant": true,
+     "e451": true
+    },
+    "probes_hit": 9,
+    "probes_total": 14,
+    "ins_recall": 1.0,
+    "ins_hits": {
+     "ins 500": true,
+     "(ii)": true,
+     "e451": true,
+     "acidity": true,
+     "humectant": true
+    },
+    "ordering_preserved": true,
+    "missing_words": [
+     "ingredients",
+     "refined wheat flour",
+     "(maida)",
+     "(70%)",
+     "palm oil"
+    ],
+    "merged_words": []
+   },
+   "incrop": {
+    "char_similarity": 1.0,
+    "token_recall": 1.0,
+    "token_precision": 1.0,
+    "probes": {
+     "salt": true,
+     "sugar": true,
+     "mixed spices": true,
+     "(0.5%)": true,
+     "acidity regulators": true,
+     "ins 500": true,
+     "(ii)": true,
+     "humectant": true,
+     "e451": true
+    },
+    "probes_hit": 9,
+    "probes_total": 9,
+    "ins_recall": 1.0,
+    "ins_hits": {
+     "ins 500": true,
+     "(ii)": true,
+     "e451": true,
+     "acidity": true,
+     "humectant": true
+    },
+    "ordering_preserved": true,
+    "missing_words": [],
+    "merged_words": []
+   },
+   "coherence": 0.635,
+   "fair_coherence": 0.635,
+   "raw_text": "Salt, Sugar, Mixed Spices (0.5%), Acidity Regulators\n(INS 500(ii)) and Humectant (E451).\n"
+  },
+  "tesseract_all": [
+   {
+    "cfg": "psm6/orig",
+    "ms": 984.3,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm11/orig",
+    "ms": 874.1,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm12/orig",
+    "ms": 1738.9,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm6/gray-contrast",
+    "ms": 927.5,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm11/gray-contrast",
+    "ms": 893.3,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm12/gray-contrast",
+    "ms": 1538.5,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm6/otsu-thresh",
+    "ms": 783.9,
+    "token_recall": 0.667,
+    "char_similarity": 0.796,
+    "ins_recall": 1.0,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm11/otsu-thresh",
+    "ms": 786.6,
+    "token_recall": 0.619,
+    "char_similarity": 0.787,
+    "ins_recall": 0.8,
+    "coherence": 0.635
+   },
+   {
+    "cfg": "psm12/otsu-thresh",
+    "ms": 1550.6,
+    "token_recall": 0.619,
+    "char_similarity": 0.787,
+    "ins_recall": 0.8,
+    "coherence": 0.635
+   }
+  ]
+ },
+ "recommendation": {
+  "option": "B",
+  "reason": "Tesseract strictly improves the ingredient crop (in-crop recall 0.929->1.0, fair coherence 0.635->0.635, fixes ['(ii)']) within budget; targeted fallback justified."
+ }
+}

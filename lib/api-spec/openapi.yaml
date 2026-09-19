@@ -1,0 +1,220 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: inspections
+    description: Inspection + rule-engine analysis operations
+  - name: rules
+    description: Legal rule configuration (read-only)
+  - name: violations
+    description: Inspector verification workflow
+  - name: reports
+    description: Compliance reports
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  # --- LegalAkshi FastAPI backend (backend/app). Additive; health untouched.
+  /api/v1/inspections:
+    post:
+      operationId: createInspection
+      tags: [inspections]
+      summary: Create an inspection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InspectionCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inspection"
+    get:
+      operationId: listInspections
+      tags: [inspections]
+      summary: List inspections
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Inspection"
+  /api/v1/inspections/{inspection_id}/products:
+    post:
+      operationId: addProduct
+      tags: [inspections]
+      summary: Attach a normalized product declaration (OCR plugs in later)
+      parameters:
+        - $ref: "#/components/parameters/InspectionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductDeclaration"
+      responses:
+        "201":
+          description: Created
+  /api/v1/inspections/{inspection_id}/analyze:
+    post:
+      operationId: analyzeInspection
+      tags: [inspections]
+      summary: Run the deterministic rule engine for an inspection/product
+      parameters:
+        - $ref: "#/components/parameters/InspectionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisResponse"
+  /api/v1/inspections/{inspection_id}/results:
+    get:
+      operationId: complianceResults
+      tags: [inspections]
+      summary: Compliance results for an inspection/product
+      parameters:
+        - $ref: "#/components/parameters/InspectionId"
+      responses:
+        "200":
+          description: OK
+  /api/v1/rules:
+    get:
+      operationId: activeRules
+      tags: [rules]
+      summary: Active legal rule versions for an as-of date
+      responses:
+        "200":
+          description: OK
+  /api/v1/violations/{violation_id}/verify:
+    post:
+      operationId: verifyViolation
+      tags: [violations]
+      summary: Inspector verification (confirm / reject / require review)
+      responses:
+        "200":
+          description: OK
+  /api/v1/reports/{inspection_id}:
+    get:
+      operationId: inspectionReport
+      tags: [reports]
+      summary: Compliance summary report
+      parameters:
+        - $ref: "#/components/parameters/InspectionId"
+      responses:
+        "200":
+          description: OK
+components:
+  parameters:
+    InspectionId:
+      name: inspection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    InspectionCreate:
+      type: object
+      properties:
+        title: { type: string }
+        inspector: { type: string }
+        location: { type: string }
+        as_of_date: { type: string, format: date }
+    Inspection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { type: string }
+        as_of_date: { type: string, format: date }
+    ProductDeclaration:
+      type: object
+      description: Normalized declaration contract (OCR populates this later)
+      properties:
+        product_name: { type: string }
+        common_name: { type: string }
+        mrp: { type: number, nullable: true }
+        net_quantity: { type: number, nullable: true }
+        net_quantity_unit: { type: string }
+        manufacturer_name: { type: string }
+        manufacturer_address: { type: string }
+        country_of_origin: { type: string }
+        manufacturing_date: { type: string }
+        best_before: { type: string }
+        veg_nonveg: { type: string }
+        consumer_care: { type: string }
+        imported: { type: boolean }
+        ecommerce: { type: boolean }
+    AnalyzeRequest:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        as_of_date: { type: string, format: date }
+    AnalysisResponse:
+      type: object
+      properties:
+        inspection_id: { type: string }
+        product_id: { type: string }
+        score: { type: number }
+        status: { type: string }
+        finalizable: { type: boolean }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              check_id: { type: string }
+              result: { type: string }
+              confidence: { type: number }
+              explanation: { type: string }
+      required:
+        - inspection_id
+        - product_id
+        - score
+        - status
+        - finalizable
+        - findings
+

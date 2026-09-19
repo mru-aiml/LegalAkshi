@@ -1,0 +1,7 @@
+<svg width="176" height="44" viewBox="0 0 176 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="2" y="2" width="40" height="40" rx="12" fill="#18B978"/>
+  <path d="M22 11.5L30.5 14.8V21.7C30.5 27.1 27 31.5 22 33C17 31.5 13.5 27.1 13.5 21.7V14.8L22 11.5Z" stroke="white" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M18.2 22.1L20.6 24.5L25.8 19.2" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="54" y="29" fill="#17191C" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800" letter-spacing="-0.8">Legal</text>
+  <text x="106" y="29" fill="#18B978" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800" letter-spacing="-0.8">Akshi</text>
+</svg>

@@ -221,18 +221,87 @@ def h_cross_field_compare(values, field, params, **_) -> tuple:
 
 
 def h_platform_filter_present(values, field, params, **_) -> tuple:
+    # E-commerce declarations (Rule 6(10)/6(10A)) concern the ONLINE listing,
+    # not the physical package. A package photograph can never establish
+    # whether the seller's online listing contains or lacks declarations,
+    # so absence of online evidence must NEVER be reported as FAIL.
     if not values.get("ecommerce"):
         return NA, "", "not an e-commerce listing."
+    ctx = str(values.get("inspection_context") or "").strip().upper()
+    if ctx == "PACKAGE_ONLY":
+        return REVIEW, str(values.get(field) or ""), \
+            ("no e-commerce listing evidence was provided (physical package "
+             "inspection only). Physical package images cannot establish "
+             "online listing compliance; not checked.")
     v = values.get(field)
     if _present(v) and v is not False:
         return PASS, str(v), "platform declaration present."
+    if not _online_listing_evidence(values, field):
+        return REVIEW, "" if v is None else str(v), \
+            ("no e-commerce listing evidence was provided (no listing URL, "
+             "listing screenshot, or online-listing context). Physical "
+             "package images cannot establish online listing compliance; "
+             "not checked.")
     return FAIL, "" if v is None else str(v), \
         "required e-commerce declaration missing."
+
+
+def _online_listing_evidence(values, field: str) -> bool:
+    """True when the officer supplied online-listing context.
+
+    Accepts (existing infrastructure, no schema change): source_listing_url
+    (authoritative column), online_listing_url / listing_url /
+    online_listing_evidence declaration extras, or an explicit
+    inspection_context of ONLINE_LISTING / PACKAGE_AND_ONLINE_LISTING.
+    A present declaration value itself is evidence for its own check.
+    """
+    if _present(values.get(field)) and values.get(field) is not False:
+        return True
+    for key in ("source_listing_url", "online_listing_url", "listing_url",
+                "online_listing_evidence", "ecommerce_evidence",
+                "listing_screenshot", "online_evidence",
+                # facts.py maps the authoritative source_listing_url column
+                # onto ecommerce_declarations, so a stored listing URL
+                # surfaces under that field name.
+                "ecommerce_declarations"):
+        if key == field:
+            continue  # own value handled by the caller via _present()
+        candidate = values.get(key)
+        if _present(candidate) and candidate is not False:
+            return True
+    ctx = str(values.get("inspection_context") or "").strip().upper()
+    if ctx in ("ONLINE_LISTING", "PACKAGE_AND_ONLINE_LISTING",
+               "ONLINE", "PACKAGE_AND_ONLINE"):
+        return True
+    return False
 
 
 def h_manual_review(values, field, params, **_) -> tuple:
     return REVIEW, str(values.get(field) or ""), \
         "check requires human review (no automatable configuration)."
+
+
+def h_ingredient_screen(values, field, params, **_) -> tuple:
+    """Advisory ingredient screening — registry-driven, never a prohibition
+    by default. An explicit configured outcome (params.decision_map entry
+    with status PROHIBITED/RESTRICTED) is required before any restrictive
+    conclusion; otherwise NEEDS_REVIEW / UNKNOWN-style review routing."""
+    v = values.get(field)
+    if not _present(v):
+        return REVIEW, str(v or ""), \
+            "no ingredient list supplied; nothing screened."
+    decision_map = params.get("decision_map") or {}
+    text = str(v).lower()
+    for needle, outcome in decision_map.items():
+        if str(needle).lower() in text and isinstance(outcome, dict):
+            status = str(outcome.get("status", "")).upper()
+            if status in ("PROHIBITED", "RESTRICTED", "CONDITIONAL"):
+                return (FAIL if status == "PROHIBITED" else REVIEW), str(v), \
+                    f"{outcome.get('reason', 'configured ingredient rule.')}"
+    return REVIEW, str(v), \
+        ("ingredient list screened against the configured registry; no "
+         "configured prohibition matched — inspector review decides. "
+         "Unknown ingredients are not offences.")
 
 
 CHECK_HANDLERS = {
@@ -252,6 +321,7 @@ CHECK_HANDLERS = {
     "CROSS_FIELD_COMPARE": h_cross_field_compare,
     "PLATFORM_FILTER_PRESENT": h_platform_filter_present,
     "MANUAL_REVIEW": h_manual_review,
+    "INGREDIENT_SCREEN": h_ingredient_screen,
 }
 
 
