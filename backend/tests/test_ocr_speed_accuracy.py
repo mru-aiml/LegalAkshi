@@ -57,10 +57,18 @@ class _CountingProvider:
                    for t, c in rows], engine=self.name)
 
 
-def _png_bytes() -> bytes:
-    from PIL import Image
+def _png_bytes(slot: int | None = None) -> bytes:
+    # Distinct panels need distinct pixels (Stage 3A.5 dedup); slots are
+    # 2D grid positions. Same slot twice = intentional duplicate.
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (900, 300), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -111,7 +119,8 @@ def test_maggi_70g_extracted_with_ocr_provenance():
 
     provider = _CountingProvider(MAGGI_LINES)
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     qty = out["fields_detailed"]["quantity"]
     assert qty["value"] == "70"
@@ -238,7 +247,8 @@ def test_cross_image_agreement_keeps_best_confidence():
         "back": [("70 g", 0.94)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     qty = out["fields_detailed"]["quantity"]
     assert qty["value"] == "70"
@@ -255,7 +265,8 @@ def test_cross_image_conflict_becomes_needs_review():
         "back": [("MRP Rs.80", 0.88)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     mrp = out["fields_detailed"]["mrp"]
     assert mrp["status"] == "NEEDS_REVIEW"
@@ -273,7 +284,8 @@ def test_staged_pipeline_single_pass_when_complete():
     })
     t0 = time.perf_counter()
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     elapsed = time.perf_counter() - t0
     # Old pipeline: 4 full-frame variants x 2 images = 8 provider calls.

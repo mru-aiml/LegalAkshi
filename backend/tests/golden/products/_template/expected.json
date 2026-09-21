@@ -1,0 +1,16 @@
+{
+  "product_name": null,
+  "manufacturer": null,
+  "quantity": null,
+  "unit": null,
+  "mrp": null,
+  "manufacturing_date": null,
+  "best_before": null,
+  "fssai_license": null,
+  "batch": null,
+  "consumer_care": null,
+  "ingredients": null,
+  "veg_nonveg": null,
+  "verified": false,
+  "verification_source": null
+}

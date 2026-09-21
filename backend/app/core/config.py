@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # Backend env only — clients can never grant themselves roles.
     OFFICER_USER_IDS: str = ""
     ADMIN_USER_IDS: str = ""
+    # Stage 2 — Package Intelligence vision provider (multimodal AI for
+    # extraction/reconciliation ONLY; never for compliance decisions).
+    # LEGALAKSHI_VISION_PROVIDER: "" (disabled) | "mock" | "gemini".
+    # LEGALAKSHI_VISION_ENABLED=false by default: OCR-only flow continues.
+    LEGALAKSHI_VISION_PROVIDER: str = ""
+    LEGALAKSHI_VISION_MODEL: str = ""
+    LEGALAKSHI_VISION_API_KEY: str = ""
+    LEGALAKSHI_VISION_ENABLED: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

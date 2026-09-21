@@ -1,0 +1,22 @@
+[
+  {
+    "image": null,
+    "field": "mrp",
+    "expected_value": null,
+    "expected_unit": "INR",
+    "evidence_bbox": null,
+    "verification_source": null,
+    "package_type": null,
+    "verified": false
+  },
+  {
+    "image": null,
+    "field": "quantity",
+    "expected_value": null,
+    "expected_unit": "g",
+    "evidence_bbox": null,
+    "verification_source": null,
+    "package_type": null,
+    "verified": false
+  }
+]

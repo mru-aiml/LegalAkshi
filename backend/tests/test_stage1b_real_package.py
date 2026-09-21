@@ -62,10 +62,18 @@ class _CountingProvider:
         return OcrOutput(lines=lines, engine=self.name)
 
 
-def _png_bytes(w: int = 900, h: int = 300) -> bytes:
-    from PIL import Image
+def _png_bytes(w: int = 900, h: int = 300, slot: int | None = None) -> bytes:
+    # Distinct panels need distinct pixels (Stage 3A.5 dedup); slots are
+    # 2D grid positions. Same slot twice = intentional duplicate.
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (w, h), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -299,8 +307,10 @@ def test_call_budget_respected_four_images():
         "image_1": [("Best Before 9 months from manufacture", 0.8)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back"),
-         (_png_bytes(), "image_0"), (_png_bytes(), "image_1")],
+        [(_png_bytes(slot=0), "front"),
+         (_png_bytes(slot=1), "back"),
+         (_png_bytes(slot=2), "image_0"),
+         (_png_bytes(slot=3), "image_1")],
         provider=provider)
     t = out["timings"]
     # One full-page OCR per image maximum, never rerun for fields.
@@ -360,8 +370,10 @@ def test_real_package_end_to_end_no_contamination():
         "image_1": [("Customer Care 1800-103-1947", 0.9)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back"),
-         (_png_bytes(), "image_0"), (_png_bytes(), "image_1")],
+        [(_png_bytes(slot=0), "front"),
+         (_png_bytes(slot=1), "back"),
+         (_png_bytes(slot=2), "image_0"),
+         (_png_bytes(slot=3), "image_1")],
         provider=provider)
     ing = out["food"]["fields"]["ingredients"]
     cleaned = (ing["cleaned_text"] or "").upper()

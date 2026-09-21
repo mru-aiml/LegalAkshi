@@ -38,8 +38,15 @@ _ING_HEAD_LINE = re.compile(
 _ING_KEYWORD = re.compile(r"ingredients?", re.I)
 # Hindi/Devanagari equivalent printed on Indian packs ("sāmagri").
 _ING_HEAD_HINDI = re.compile(r"सामग्री|samagr[iy]", re.I)
+# "Made from X" declaration opener (spec: recognized heading).
+_MADE_FROM_HEAD = re.compile(r"^\s*made\s+from\b", re.I)
 # Canonical heading spellings for tolerant (OCR-error-proof) matching.
-_ING_CANONICALS = ("ingredients", "ingredient", "composition", "contents")
+# NOTE: "contents" is deliberately EXCLUDED — a bare CONTENTS line is
+# ambiguous (table of contents / net-contents header) and only qualifies
+# with ingredient-like evidence (see _is_ingredient_heading).
+_ING_CANONICALS = ("ingredients", "ingredient", "composition")
+# First-token spellings that need contextual evidence.
+_CONTEXT_HEADINGS = ("contents", "contains")
 
 
 def _edit_distance(a: str, b: str) -> int:
@@ -78,14 +85,17 @@ _DOMAIN_FRAG = re.compile(
     r"\b", re.I)
 _BARCODE_LINE = re.compile(r"^[\d\s\-/\\|lI]{8,}$")
 _DUP_SPACE = re.compile(r"\s+")
-_NUTRI_HEAD = re.compile(r"nutrition(?:al)?(?:\s+information|\s+facts)?", re.I)
+_NUTRI_HEAD = re.compile(
+    r"nutrition(?:al)?(?:\s+information|\s+facts)?|"
+    r"typical\s+values?|approximate\s+values?", re.I)
 _ALLERGEN_HEAD = re.compile(r"allerge?n", re.I)
 _STORAGE_HEAD = re.compile(r"stor(?:age|e)|keep\s+in|store\s+in", re.I)
 _COOK_HEAD = re.compile(
     r"direction|preparation|how\s+to\s+(?:cook|prepare|use)|recipe|cooking",
     re.I)
 _WARN_HEAD = re.compile(r"warn|c caution|note:|statutory| disclaimer", re.I)
-_FSSAI_HEAD = re.compile(r"fssai|fsslai", re.I)
+_FSSAI_HEAD = re.compile(
+    r"fssai?|fsslai|fss[l1i]|essai|f[5s]sai", re.I)
 _CARE_EMAIL = re.compile(r"[\w.%-]+@[\w.-]+\.[A-Za-z]{2,}")
 _URL_RE = re.compile(r"(?:https?://|www\.)[\w\-./?=%&]+", re.I)
 _MRP_LINE = re.compile(r"m\s*\.?\s*r\s*\.?\s*p|maximum\s+retail\s+price", re.I)
@@ -117,6 +127,12 @@ _CONTAINS_HEAD = re.compile(
 _FEEDBACK_HEAD = re.compile(
     r"for\s+feedback|for\s+(?:any\s+)?quer(?:y|ies)|feedback\b|"
     r"\bcomplaints?\b.*:|\bwrite\s+to\s+us\b", re.I)
+# Stage 3B.10 extra stop markers: portion guidance, QR/scan prompts.
+# Line-anchored so mid-list prose is unaffected.
+_PORTION_HEAD = re.compile(
+    r"know\s+your\s+portion|serving\s+suggestion|serves\s+\d", re.I)
+_QR_HEAD = re.compile(r"\bqr\s*code\b|scan\s+(?:the\s+)?qr|scan\s+to\s+know",
+                      re.I)
 # --- Stage-1B explicit ingredient boundary patterns (spec §3.8) ---
 # Word-boundary regexes for spaced print; spaceless matching below catches
 # OCR-glued runs ("CONSUMERCARE", "ONCEOPENED", "Forfeeback-Contacd").
@@ -141,12 +157,28 @@ _FSSAI_EXTRA = re.compile(r"fssai|lic\.?\s*no|licen[sc]e", re.I)
 _NUTRI_BARCODE_EXTRA = re.compile(
     r"nutrition|per\s+100\s*g|bar\s*-?\s*code|\bwebsite\b|\.in\b|\.com\b|@",
     re.I)
+# Stage 3 §5: bare nutrition-table ROWS (not just the heading) end the
+# ingredient block: a line opening with a nutrient name (or serving /
+# %RDA / per-100 / approximate-values language) plus a number is a
+# table row, never an ingredient clause — unless it carries a
+# parenthetical group, which is strongly ingredient-like.
+_NUTRIENT_ROW_HEAD = re.compile(
+    r"^\s*(?:energy|protein|carbohydrate(?:s)?|total\s+sugars?|"
+    r"added\s+sugars?|sugars?|total\s+fat|saturated\s+fat|trans\s+fat|"
+    r"sodium|dietary\s+fib(?:re|er)|fib(?:re|er)|fat|cholesterol|"
+    r"calcium|iron|vitamin|potassium|serving\s+size|servings?\s+per|"
+    r"no\.?\s*of\s+servings?)"
+    r"(?=[\s:\-–]*\d)", re.I)
+_NUTRIENT_ROW_MARKER = re.compile(
+    r"per\s+100|per\s+serving|approximate\s+values?|%\s*(?:rda|rdi|daily)|"
+    r"\brda\b|\brdi\b|\bkcal\b", re.I)
 _SECTION_HEADS = (_NUTRI_HEAD, _ALLERGEN_HEAD, _STORAGE_HEAD, _COOK_HEAD,
                   _DIRECTIONS_HEAD, _WARN_HEAD, _MFG_HEAD, _BB_HEAD,
                   _BATCH_HEAD, _MRP_LINE, _FSSAI_HEAD, _CARE_EMAIL,
                   _CARE_HEAD, _PHONE_LIKE, _MAKER_HEAD, _PACKER_HEAD,
                   _IMPORTER_HEAD, _ING_HEAD_COLON, _BARCODE_HEAD,
-                  _CONTAINS_HEAD, _FEEDBACK_HEAD)
+                  _CONTAINS_HEAD, _FEEDBACK_HEAD, _PORTION_HEAD,
+                  _QR_HEAD)
 
 
 def _is_section_head(text: str) -> bool:
@@ -290,8 +322,21 @@ def ingredient_boundary_decision(text: str) -> tuple[bool, str | None, str]:
     # 8. Nutrition / barcode.
     if _NUTRI_HEAD.search(s):
         return True, "NUTRITION", "nutrition heading"
+    if _NUTRIENT_ROW_HEAD.search(s) and "(" not in s:
+        return True, "NUTRITION", "nutrition table row"
+    if _NUTRIENT_ROW_MARKER.search(s) and re.search(r"\d", s) \
+            and "(" not in s and "," not in s:
+        return True, "NUTRITION", "nutrition table marker + value"
     if _BARCODE_HEAD.search(s):
         return True, "BARCODE", "barcode label"
+    # 8b. Portion guidance / QR prompts / typical-values tables: never
+    # ingredient content (Stage 3B.10 stop list).
+    if _PORTION_HEAD.search(s):
+        return True, "PORTION", "portion/serving guidance marker"
+    if _QR_HEAD.search(s):
+        return True, "QR", "QR/scan prompt marker"
+    if re.search(r"typical\s+values?|approximate\s+values?", low):
+        return True, "NUTRITION", "typical/approximate values table"
     # 9. Spaceless glued markers (OCR merged print).
     for section, marker in _SPACELESS_BOUNDARIES:
         if marker in nospace and len(marker) >= 5:
@@ -349,12 +394,15 @@ _SECTION_CANONICALS: tuple[tuple[str, Any], ...] = (
     ("MRP", _MRP_LINE),
     ("FSSAI", _FSSAI_HEAD),
     ("FEEDBACK", _FEEDBACK_HEAD),
+    ("PORTION", _PORTION_HEAD),
+    ("QR", _QR_HEAD),
     ("CONSUMER_CARE", _CARE_HEAD),
     ("BARCODE", _BARCODE_HEAD),
 )
 
 
-def match_section_boundary(text: str) -> str | None:
+def match_section_boundary(text: str, context: str | None = None
+                           ) -> str | None:
     """Canonical section name a line opens, or None.
 
     Normalized (tolerant regexes, canonical labels) rather than exact
@@ -362,7 +410,9 @@ def match_section_boundary(text: str) -> str | None:
     ingredient block instead of contaminating it. A bare ingredient
     heading wins outright; a shared heading line ("Contains: ...") is
     classified by the specific sections first so allergen openers are
-    never mistaken for ingredient headings.
+    never mistaken for ingredient headings. Ambiguous CONTENTS/CONTAINS
+    openers consult ``context`` (neighbouring lines) via the heading
+    gate — without it they classify as None (absorbed, never a stop).
     """
     s = (text or "").strip()
     if not s:
@@ -374,7 +424,11 @@ def match_section_boundary(text: str) -> str | None:
             continue  # resolved below via the tolerant heading matcher
         if rx.search(s):
             return name
-    if _is_ingredient_heading(s):
+    # A contents opener with a pure-allergen remainder ("Contents:
+    # Milk, Soy") is the allergen declaration, never ingredients.
+    if _allergen_declaration_shape(s):
+        return "CONTAINS"
+    if _is_ingredient_heading(s, context):
         return "INGREDIENTS"
     return None
 _VEG_TEXT = re.compile(r"veg(?:etarian)?(?:\s+logo)?|non[\s-]*veg", re.I)
@@ -454,8 +508,13 @@ def _reconstruct_nutrition_block(
         s = (t or "").strip()
         if not s:
             continue
+        # Stage 3 §5/§15: nutrient ROWS ("Energy 450 kcal") are section
+        # heads for ingredient assembly but CONTENT here — only a
+        # non-nutrition labelled section ends the table.
         if _is_section_head(s) and not _NUTRI_HEAD.search(s):
-            break
+            _is_b, _section, _why = ingredient_boundary_decision(s)
+            if not _is_b or _section not in (None, "NUTRITION"):
+                break
         if _NUTRI_VALUE_ONLY.match(s) and rows:
             rows[-1] = (rows[-1] + " " + s).strip()
             confs.append(c)
@@ -483,12 +542,15 @@ def find_dense_text_band(lines: list[Any], frame_size: tuple[int, int],
     except (TypeError, ValueError, IndexError):
         return None
     scored = []
-    for ln in lines or []:
+    rows = list(lines or [])
+    for k, ln in enumerate(rows):
         text = (getattr(ln, "text", "") or "").strip()
         box = getattr(ln, "box", None)
         if len(text) < 12 or not box:
             continue
-        if _is_section_head(text) or _is_ingredient_heading(text):
+        ctx = " ".join(str(getattr(r, "text", "") or "")
+                       for r in rows[max(0, k - 2):k + 3])
+        if _is_section_head(text) or _is_ingredient_heading(text, ctx):
             continue
         try:
             xs = [float(p[0]) for p in box]
@@ -600,6 +662,14 @@ def contamination_verdict(text: str) -> tuple[bool, str]:
         return True, "contact block marker"
     if _MAKER_EXTRA.search(s):
         return True, "maker/packer/importer opener"
+    # Packaging-material/maker shorthand ("Pkg", "Mtrl", "Rotopack",
+    # "Pvt", "Ltd") and standalone PIN codes never occur inside a
+    # genuine ingredient declaration — they mark address blocks that
+    # bled into the ingredient region.
+    if re.search(r"\bpkg\b|\bmtrl\b|\brotopack\b|\bpvt\b|\bltd\b", low):
+        return True, "packaging/maker address block"
+    if re.search(r"(?<!\d)\d{6}(?!\d)", s):
+        return True, "PIN/address number block"
     if _BB_HEAD.search(s) or _BATCH_HEAD.search(s):
         return True, "date/batch opener"
     if _MFG_HEAD.search(s) and (
@@ -607,10 +677,14 @@ def contamination_verdict(text: str) -> tuple[bool, str]:
             or re.match(r"\s*(mfd|mfg|pkd|pkg|manufactured|packed)\b",
                         low)):
         return True, "manufacturing/packing date line"
-    if "fssai" in low or "fsslai" in nospace:
+    if _FSSAI_HEAD.search(s):
         return True, "FSSAI block marker"
     if _NUTRI_HEAD.search(s) or "per100g" in nospace:
         return True, "nutrition block marker"
+    if _PORTION_HEAD.search(s):
+        return True, "portion/serving guidance marker"
+    if _QR_HEAD.search(s):
+        return True, "QR/scan prompt marker"
     if _BARCODE_HEAD.search(s):
         return True, "barcode label line"
     if _MRP_LINE.search(s) and re.search(r"rs\.?|inr|\u20b9|\d", s, re.I):
@@ -661,37 +735,149 @@ def filter_contaminated_ingredient_lines(
     return accepted, rejected
 
 
-def _is_ingredient_heading(text: str) -> bool:
+_ING_HEADING_STRIP = re.compile(
+    r"(?i)^\s*(ingredients?|composition|contents|contains|made\s+from)"
+    r"\s*[:.\-/]*")
+
+
+def _heading_remainder_of(text: str) -> str:
+    """Text following the heading word on the same line (may be empty)."""
+    return _ING_HEADING_STRIP.sub("", text or "", count=1).strip()
+
+
+def _allergen_declaration_shape(text: str) -> bool:
+    """Whether a CONTAINS line is the standalone allergen declaration
+    (not an ingredient heading): line-start "contains" whose remainder
+    is a short list drawn only from known allergen words, without
+    percentages, INS codes, or parenthetical groups.
+    """
+    s = (text or "").strip()
+    if not re.match(r"(?i)^\s*(?:contents?|contains?)\b", s):
+        return False
+    rest = _heading_remainder_of(s)
+    if not rest or "%" in rest or "(" in rest:
+        return False
+    if re.search(r"\bINS\b|\bE\s*\d{3,4}\b", rest, re.I):
+        return False
+    words = re.findall(r"[a-z]{3,}", rest.lower())
+    if not words or len(rest.split(",")) > 3:
+        return False
+    return all(w in _ALLERGEN_WORDS for w in words)
+
+
+def _ingredient_like_evidence(fragment: str | None) -> bool:
+    """Whether a text fragment looks like ingredient-declaration content.
+
+    Recognition signal only (percentages, INS/E tokens, parenthetical
+    groups, comma structure, food vocabulary) — never invents anything.
+    Used to qualify ambiguous CONTENTS/CONTAINS openers.
+    """
+    t = (fragment or "").strip()
+    if not t:
+        return False
+    if "%" in t:
+        return True
+    if re.search(r"\bINS\b|\bE\s*\d{3,4}\b", t, re.I):
+        return True
+    words = re.findall(r"[a-z]{3,}", t.lower())
+    food_hits = sum(1 for w in words if w in _COMMON_FOOD_WORDS)
+    if re.search(r"\([^()]{0,60}\)", t) and food_hits >= 1:
+        return True
+    if ("," in t or ";" in t) and food_hits >= 1:
+        return True
+    return food_hits >= 2
+
+
+def _is_ingredient_heading(text: str, context: str | None = None) -> bool:
     """A line that opens the ingredient declaration (not net contents).
 
     Tolerant of OCR damage: "INGREDIENTS." / "INGREDIENTS / CONTENTS" /
-    "INGRED1ENTS" / "COMPOSITON" / Hindi "सामग्री" all match, provided the
-    line carries no digits (headings never contain quantities — this keeps
-    "Net contents 70 g" excluded).
+    "INGRED1ENTS" / "COMPOSITON" / Hindi "सामग्री" / "MADE FROM X" all
+    match, provided the line carries no digits (headings never contain
+    quantities — this keeps "Net contents 70 g" excluded).
+
+    "CONTENTS"/"CONTAINS" do NOT qualify automatically: they need
+    ingredient-like evidence in the heading line's own remainder
+    ("Contents: wheat flour, sugar") or in neighbouring lines
+    (``context``). A bare "CONTENTS" table-of-contents header is
+    therefore never treated as an ingredient heading.
     """
     if _QTY_LIKE.search(text):
         return False
-    if _ING_HEAD_COLON.search(text) or _ING_HEAD_BARE.match(text):
-        return True
     if _ING_HEAD_HINDI.search(text):
         return True
-    stripped = text.strip()
-    # Quantity/date/barcode lines are excluded by _QTY_LIKE above plus the
-    # digit-run guard below; digits alone must not veto ("INGRED1ENTS").
-    if re.search(r"\d{4,}", stripped):
-        return False
-    core = _heading_core(stripped)
-    if len(core) < 6:
-        return False
-    if core in _ING_CANONICALS:
-        # Exact first-token hit: the heading may share its line with the
-        # declaration itself ("INGREDIENTS Refined Wheat Flour ...",
-        # colon dropped by OCR) — length is irrelevant then.
+    if _MADE_FROM_HEAD.search(text or ""):
         return True
-    if len(stripped) > 42:
-        return False
-    return any(_edit_distance(core, canon) <= 2
-               for canon in _ING_CANONICALS)
+    stripped = (text or "").strip()
+    core = _heading_core(stripped)
+    strong = False
+    weak = False
+    if _ING_HEAD_COLON.search(text) or _ING_HEAD_BARE.match(text):
+        # Colon/bare forms still need a strong token; a lone
+        # "contents:"/"contains:" falls through to the evidence gate.
+        if re.search(r"(?i)ingredients?|composition", text):
+            strong = True
+        else:
+            weak = True
+    if not strong and not weak:
+        # Quantity/date/barcode lines are excluded by _QTY_LIKE above
+        # plus the digit-run guard below; digits alone must not veto
+        # ("INGRED1ENTS").
+        if re.search(r"\d{4,}", stripped):
+            return False
+        if len(core) < 6:
+            return False
+        if core in _ING_CANONICALS:
+            # Exact first-token hit: the heading may share its line with
+            # the declaration itself ("INGREDIENTS Refined Wheat Flour
+            # ...", colon dropped by OCR) — length is irrelevant then.
+            strong = True
+        elif core in _CONTEXT_HEADINGS:
+            weak = True
+        else:
+            if len(stripped) > 42:
+                return False
+            if any(_edit_distance(core, canon) <= 2
+                   for canon in _ING_CANONICALS):
+                strong = True
+    if strong:
+        return True
+    if weak:
+        # A standalone allergen declaration ("Contains: Milk, Soy") is
+        # never an ingredient heading, however food-like its words are.
+        if _allergen_declaration_shape(stripped):
+            return False
+        # Ambiguous opener: require ingredient-like evidence on the line
+        # itself or in the neighbourhood — never blind.
+        if _ingredient_like_evidence(_heading_remainder_of(stripped)):
+            return True
+        return _ingredient_like_evidence(context)
+    return False
+
+
+def _find_ingredient_head(parts: list[tuple]) -> int | None:
+    """Index of the ingredient heading line: strong openers
+    (INGREDIENTS/COMPOSITION/MADE FROM/…) win over gated
+    CONTENTS/CONTAINS openers, so an allergen "Contains: …" line printed
+    above the declaration can never shadow the real heading. Neighbour
+    lines supply the gating context.
+    """
+    window = 3
+
+    def _ctx(i: int) -> str:
+        lo, hi = max(0, i - window), i + window + 1
+        return " ".join(t for t, _, _, _ in parts[lo:hi]
+                        if t and t != parts[i][0])
+
+    for i, (t, _, _, _) in enumerate(parts):
+        if _is_ingredient_heading(t) and _heading_core(
+                t) not in _CONTEXT_HEADINGS and not re.search(
+                r"(?i)^\s*contains?\b", t or ""):
+            return i
+    for i, (t, _, _, _) in enumerate(parts):
+        if _is_ingredient_heading(t, _ctx(i)):
+            return i
+    return None
 
 
 def clean_ingredient_text(raw: str | None) -> tuple[str | None, list[str]]:
@@ -826,8 +1012,9 @@ def extract_food_label(lines: list[Any],
     raw, rconfs, rimg, ridx = None, [], None, None
     col_filtered = 0
     assembly_notes: list[str] = []
-    head_idx = next((i for i, (t, _, _, _) in enumerate(parts)
-                     if _is_ingredient_heading(t)), None)
+    # Strong openers win over gated CONTENTS/CONTAINS openers so an
+    # allergen "Contains: …" line never shadows the real heading.
+    head_idx = _find_ingredient_head(parts)
     region = [ln for ln in (region_lines or [])
               if str(getattr(ln, "text", "") or "").strip()]
     # Stage-1B: contamination guard runs BEFORE assembly. Rejected lines
@@ -859,8 +1046,9 @@ def extract_food_label(lines: list[Any],
         # decision (never a blind keyword stop inside a real declaration).
         cut: list[str] = []
         cut_confs: list[float] = []
-        for bline, bconf in zip(buf, rconfs):
-            boundary = match_section_boundary(bline)
+        for k, (bline, bconf) in enumerate(zip(buf, rconfs)):
+            ctx = " ".join(buf[max(0, k - 2):k + 3])
+            boundary = match_section_boundary(bline, ctx)
             if boundary is None:
                 is_b, boundary, _why = ingredient_boundary_decision(bline)
                 if not is_b:
@@ -923,7 +1111,8 @@ def extract_food_label(lines: list[Any],
             if image_columns and j < len(part_lines):
                 ln = part_lines[j]
                 variant = str(getattr(ln, "variant", "") or "")
-                if not (variant.startswith("region:") or variant == "rot90"):
+                if not (variant.startswith("region:")
+                        or variant in ("rot90", "rot180")):
                     rect = _line_rect(ln)
                     col = image_columns.get(parts[j][2])
                     if rect is not None and col is not None and \
@@ -1147,7 +1336,10 @@ def _ingredient_vocab() -> set[str]:
     vocab.update(
         "refined wheat flour maida sugar palm oil milk salt spices mixed "
         "herbs tomato onion powder water gluten rice corn soya starch "
-        "contains allergen ingredients list".split())
+        "contains allergen ingredients list products product whey "
+        "condensed sweetened solids butter ghee glucose syrup fructose "
+        "lactose casein malt extract hydrogenated vanaspati cocoa "
+        "solids millet oat oats barley rye".split())
     return vocab
 
 
@@ -1322,12 +1514,60 @@ def _squeeze_paren_numbers(text: str) -> str:
     return re.sub(r"\(\s*(\d(?:[\d\s]{0,6})\d)\s*\)", _fix, text)
 
 
+def _join_row_fragments(frags: list[str],
+                        boxes: list[Any],
+                        notes: list[str]) -> list[str]:
+    """Join box-ordered fragments using visual gaps (Stage-1D, Part 12B).
+
+    Fragments already carry trailing/leading spaces from the join below;
+    here consecutive same-row fragments whose boxes nearly touch (gap <
+    0.35 x median char width) are concatenated WITHOUT a space — the
+    OCR engine split one visual word across two boxes. Anything else
+    keeps the legacy space join. Boxless fragments always join with a
+    space. Every tight join is disclosed; nothing is reordered.
+    """
+    if not frags:
+        return frags
+    # boxes[i] aligns with frags[i]; pad defensively.
+    padded = list(boxes) + [None] * max(0, len(frags) - len(boxes))
+    joined: list[str] = [frags[0]]
+    joined_idx: list[int] = [0]
+    for k in range(1, len(frags)):
+        frag, box = frags[k], padded[k]
+        prev_box = padded[joined_idx[-1]]
+        gap_join = False
+        try:
+            if box is not None and prev_box is not None:
+                px0, py0, px1, py1 = prev_box
+                x0, y0, x1, y1 = box
+                v_overlap = max(0.0, min(py1, y1) - max(py0, y0))
+                v_min = min(py1 - py0, y1 - y0)
+                prev_w = max(px1 - px0, 1e-6)
+                prev_len = max(len(joined[-1].strip()), 1)
+                char_w = prev_w / prev_len
+                gap = x0 - px1
+                if v_min > 0 and v_overlap / v_min >= 0.5 \
+                        and 0 <= gap < 0.35 * char_w:
+                    gap_join = True
+        except (TypeError, IndexError, ValueError, ZeroDivisionError):
+            gap_join = False
+        if gap_join:
+            joined[-1] = joined[-1].rstrip() + frag.lstrip()
+            notes.append("joined tight boxes without space: "
+                         f"{joined[-1][-24:]}")
+        else:
+            joined.append(frag)
+            joined_idx.append(k)
+    return joined
+
+
 def reconstruct_ingredient_text(lines: list[Any]) -> tuple[str, list[str]]:
     """Rebuild one ingredient paragraph from region OCR lines.
 
     Returns (text, notes). Box-ordered (top-to-bottom rows, left-to-right
-    within a row); hyphenated line-breaks rejoined; INS/E-number tokens
-    normalised; every repair disclosed in notes.
+    within a row); tight same-row boxes rejoined without spaces;
+    hyphenated line-breaks rejoined; INS/E-number tokens normalised;
+    every repair disclosed in notes.
     """
     notes: list[str] = []
     rows: list[tuple[str, float]] = []
@@ -1347,6 +1587,9 @@ def reconstruct_ingredient_text(lines: list[Any]) -> tuple[str, list[str]]:
                                    if pair[0] < len(lines) else None,
                                    pair[0])))
     frags = [rows[i][0] for i, _ in ordered]
+    frag_boxes = [_line_rect(lines[i]) if i < len(lines) else None
+                  for i, _ in ordered]
+    frags = _join_row_fragments(frags, frag_boxes, notes)
     # Stop at the next labelled section (storage/care/nutrition/...): a
     # crop that overshoots the paragraph end must not absorb the
     # following declaration. Only after content started, and never on

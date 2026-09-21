@@ -100,10 +100,20 @@ class _LabeledProvider:
                    for t, c in rows], engine=self.name)
 
 
-def _png_bytes() -> bytes:
-    from PIL import Image
+def _png_bytes(slot: int | None = None) -> bytes:
+    # Distinct panels must differ in PIXELS, not just labels: the
+    # service reuses OCR across near-duplicate uploads (Stage 3A.5).
+    # Pass distinct slot ints per panel (2D grid positions); reuse the
+    # same slot twice only to simulate an intentional duplicate.
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (900, 300), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -117,7 +127,8 @@ def test_multi_image_aggregation_combines_evidence():
         "back": [("NET WT", 0.8), ("70 g", 0.91), ("MRP Rs. 14", 0.88)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     assert out["images_analyzed"] == 2
     assert out["fields"]["quantity"]["value"] == "70"
@@ -135,7 +146,8 @@ def test_multi_image_provenance_per_field():
         "back": [("70 g", 0.91)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     det = out["fields_detailed"]["quantity"]
     assert det["value"] == "70"

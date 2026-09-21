@@ -134,6 +134,26 @@ export type AuthOptions = {
 export type OcrFieldStatus = 'DETECTED' | 'NEEDS_REVIEW' | 'NOT_DETECTED';
 export type OcrEvidenceSource = { image?: string | null; image_index?: number | null; confidence?: number | null; box?: unknown; value?: string | null; unit?: string | null };
 export type OcrField = { value: string | null; provenance: string; confidence: number | null; image?: string | null; image_index?: number | null; status?: OcrFieldStatus; box?: unknown; sources?: OcrEvidenceSource[] };
+// Stage 2B: server-side OCR + Vision reconciliation attached to the OCR
+// response (NEW keys only; legacy fields are byte-identical).
+export type ReconciledField = {
+  field: string; final_value: string | null; unit?: string | null;
+  status: OcrFieldStatus; confidence: number; sources: string[];
+  candidates: { source: string; value: string; confidence?: number | null }[];
+  agreement?: string; evidence?: (string | null)[];
+  needs_review_reason?: string; provider?: string | null; model?: string | null;
+  region?: string | null; region_image?: string | null;
+};
+export type VisionDiagnostics = {
+  vision_enabled: boolean; vision_provider?: string | null;
+  vision_model?: string | null; vision_status?: string;
+  vision_status_detail?: 'active' | 'partial' | 'unavailable' | string;
+  vision_error?: string | null; vision_calls?: number;
+  vision_latency_ms?: number | null; ocr_calls?: number;
+  ocr_ms?: number | null; reconciliation_ms?: number | null;
+  fields_requested?: string[]; fields_returned?: string[];
+  fields?: { detected?: number; needs_review?: number; not_detected?: number };
+};
 export type OcrResponse = {
   status: 'OK' | 'NEEDS_REVIEW';
   engine: string;
@@ -143,9 +163,17 @@ export type OcrResponse = {
   errors: string[];
   images?: { image: string; image_index: number; text: string; variants?: string[]; error?: string | null }[];
   images_analyzed?: number;
-  timings?: { total_ms?: number; provider_calls?: number; stage1_ms?: number; ingredient_ms?: number; declaration_ms?: number; nutrition_ms?: number; symbol_ms?: number; reconciliation_ms?: number; images?: Record<string, { image_ms?: number; stage1_ms?: number; regions?: { kind: string; ms: number; lines: number }[] }> };
+  timings?: { total_ms?: number; provider_calls?: number; stage1_ms?: number; ingredient_ms?: number; declaration_ms?: number; nutrition_ms?: number; symbol_ms?: number; reconciliation_ms?: number; images?: Record<string, { image_ms?: number; stage1_ms?: number; orientation?: string; image_quality?: Record<string, string | number | null>; regions?: { kind: string; ms: number; lines: number }[] }> };
   food?: { status: string; provenance: string; fields: Record<string, { value: unknown; confidence: number | null; provenance: string; detection?: string }>; timings?: { ingredients_ms?: number; nutrition_ms?: number } };
   veg_nonveg_symbol?: { status: 'DETECTED' | 'NOT_DETECTED' | 'NEEDS_REVIEW'; classification: 'VEGETARIAN' | 'NON_VEGETARIAN' | 'UNKNOWN'; confidence: number | null; provenance: string; reason?: string };
+  // Stage 2B: present when the backend ran the vision stage (or its
+  // OCR-only fallback). Absent on older backends — callers must cope.
+  vision?: VisionDiagnostics;
+  reconciliation?: {
+    fields: Record<string, ReconciledField>;
+    readiness?: { ready: boolean; blocked_fields: string[] };
+    dropped_vision?: { field: string; value: string | null; reason: string }[];
+  };
 };
 export type FoodIngredientItem = { ingredient?: string; name?: string; status?: string; percentage?: string | null; ins_number?: string | null; reason?: string; confidence?: number | null };
 export type IngredientRejectedLine = { text?: string; reason?: string; confidence?: number | null; source_box?: unknown };
@@ -257,7 +285,12 @@ type ReqOptions = { timeoutMs?: number; longRunning?: boolean; noCache?: boolean
 async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions, opts: ReqOptions = {}): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   const isGet = method === 'GET';
-  const timeoutMs = opts.longRunning ? LONG_TIMEOUT_MS : (opts.timeoutMs ?? READ_TIMEOUT_MS);
+  // The 12s ordinary-read timeout applies to GET reads only. Mutations
+  // (POST/PUT/PATCH/DELETE) run multi-query Neon transactions that can
+  // legitimately exceed 12s on a cold database — aborting those client-side
+  // produced "API timeout .../products" on real inspections. They share the
+  // bounded long-running budget instead (never infinite).
+  const timeoutMs = (opts.longRunning || !isGet) ? LONG_TIMEOUT_MS : (opts.timeoutMs ?? READ_TIMEOUT_MS);
   if (isGet && !opts.noCache) {
     const ttl = ttlFor(path);
     if (ttl > 0) {
@@ -292,6 +325,12 @@ async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions, opts
       });
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') throw new TimeoutError(path, timeoutMs);
+      // Raw fetch network failures surface as an opaque "Failed to fetch"
+      // TypeError. Map it to actionable guidance (API URL / CORS / server)
+      // instead of leaving officers and consumers guessing.
+      if (e instanceof TypeError) {
+        throw new Error(`Cannot reach the LegalAkshi backend at ${API_V1}${path} (network, CORS, or server down). Check the API URL and that the backend is running.`);
+      }
       throw e;
     } finally {
       clearTimeout(timer);
@@ -332,6 +371,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }, auth, { longRunning: true }),
+  // Analysis requirements: which review fields the applicable checks
+  // need, derived server-side from the Rule Engine (read-only).
+  analysisRequirements: (params: { food?: boolean; imported?: boolean; ecommerce?: boolean; category?: string; quantity_type?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.food !== undefined) q.set('food', String(params.food));
+    if (params.imported !== undefined) q.set('imported', String(params.imported));
+    if (params.ecommerce !== undefined) q.set('ecommerce', String(params.ecommerce));
+    if (params.category) q.set('category', params.category);
+    if (params.quantity_type) q.set('quantity_type', params.quantity_type);
+    const qs = q.toString();
+    return req<{
+      required: { field: string; ocr_key: string | null; form_key: string | null; checks: { check_id: string; title: string; requirement: string }[]; reasons: string[] }[];
+      optional: { field: string; ocr_key: string | null; form_key: string | null; checks: { check_id: string; title: string; requirement: string }[]; reasons: string[] }[];
+    }>(`/analysis/requirements${qs ? `?${qs}` : ''}`);
+  },
   compliance: (inspectionId: string, productId: string) =>
     req<Finding[]>(`/inspections/${inspectionId}/products/${productId}/compliance`),
   rules: () => req<BackendRule[]>('/rules'),
@@ -353,7 +407,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision, inspector_id, verification_notes }),
     }, auth),
-  report: (inspectionId: string) => req<unknown>(`/reports/${inspectionId}`),
+  // Report JSON aggregates findings + scoring server-side; like the PDF
+  // bytes it is long-running work, not an ordinary read.
+  report: (inspectionId: string) => req<unknown>(`/reports/${inspectionId}`, undefined, undefined, { longRunning: true }),
   reportPdf: async (inspectionId: string): Promise<Blob> => {
     const headers: Record<string, string> = {};
     if (tokenProvider) {
@@ -497,4 +553,49 @@ export const api = {
     }
     return res.json() as Promise<OcrResponse>;
   },
+  // --- Stage 2: Package Intelligence (extraction only, never verdicts) ---
+  visionStatus: (auth?: AuthOptions) =>
+    req<{
+      status: string; enabled: boolean; provider: string | null;
+      model: string | null; configured: boolean; reachable: boolean;
+      reason: string; api_key_present: boolean;
+    }>('/package-intelligence/vision-status', undefined, auth),
+  // Stage 2C: officer-only single liveness probe (text-only, no
+  // package images). Never carries credentials; backend decides.
+  visionHealth: (auth?: AuthOptions) =>
+    req<{ status: string; reason?: string; provider?: string | null; model?: string | null }>(
+      '/package-intelligence/vision-health', { method: 'POST' }, auth),
+  reconcile: (body: Record<string, unknown>, auth?: AuthOptions) =>
+    req<{
+      fields: Record<string, {
+        field: string; final_value: string | null; status: OcrFieldStatus;
+        confidence: number; sources: string[];
+        candidates: { source: string; value: string; confidence: number | null }[];
+        agreement: string; evidence: (string | null)[]; needs_review_reason: string;
+      }>;
+      readiness: { ready: boolean; blocked_fields: string[] };
+      diagnostics: Record<string, unknown>;
+    }>('/package-intelligence/reconcile', { method: 'POST', body: JSON.stringify(body) }, auth),
+  // --- Stage 2: declaration corrections (officer-only, append-only) ---
+  createCorrection: (inspectionId: string, productId: string, body: {
+    field_key: string; original_value?: string | null; corrected_value?: string | null;
+    original_status?: string; original_confidence?: number | null;
+    evidence_snapshot?: Record<string, unknown>; correction_reason?: string;
+  }, auth?: AuthOptions) =>
+    req<unknown>(`/inspections/${inspectionId}/products/${productId}/corrections`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }, auth),
+  listCorrections: (inspectionId: string, productId: string, auth?: AuthOptions) =>
+    req<{
+      id: string; field_key: string; original_value: string | null;
+      corrected_value: string | null; verified: boolean; created_at: string;
+    }[]>(`/inspections/${inspectionId}/products/${productId}/corrections`, undefined, auth),
+  // --- Stage 2: learning (officer-only; verified rows only are trusted) ---
+  errorPatterns: (auth?: AuthOptions) =>
+    req<{ patterns: { field: string; failure_type: string; occurrences: number }[] }>(
+      '/officer/learning/error-patterns', undefined, auth),
+  learningQueue: (auth?: AuthOptions) =>
+    req<{ queue: { priority: string; reason: string }[] }>(
+      '/officer/learning/review-queue', undefined, auth),
 };

@@ -104,7 +104,9 @@ def test_missing_fields_remain_null():
                 "consumer_care", "batch_lot", "manufacturer"):
         assert out[key]["value"] is None, key
     assert out["product_name"]["value"] == "Tasty Biscuits"
-    assert out["common_generic_name"]["value"] == "Tasty Biscuits"
+    # Stage-1D: the generic name is distinguished from the product name
+    # when a category word is present ("Biscuits"), else mirrors it.
+    assert out["common_generic_name"]["value"] == "Biscuits"
 
 
 def test_hits_carry_ocr_provenance_confidence():

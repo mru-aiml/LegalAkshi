@@ -35,6 +35,39 @@ def list_inspections(request: Request):
     return _repo(request).list_inspections()  # authoritative: bare array
 
 
+def _opt_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "y")
+
+
+@router.get("/analysis/requirements")
+def analysis_requirements(
+        request: Request,
+        food: str | None = None,
+        imported: str | None = None,
+        ecommerce: str | None = None,
+        category: str | None = None,
+        quantity_type: str | None = None,
+        as_of: str | None = None):
+    """Fields the applicable checks need, derived from the Rule Engine.
+
+    Read-only introspection (versions + checks + applicability evaluated
+    with the engine's own decide()): no legal content invented here.
+    The Scan & Inspect readiness gate consumes this — required entries
+    with a form_key gate analysis; entries without one are informational
+    (covered by inspection context, never blocking).
+    """
+    from app.services import analysis_requirements as req_mod
+
+    context = {k: v for k, v in {
+        "food": _opt_bool(food), "imported": _opt_bool(imported),
+        "ecommerce": _opt_bool(ecommerce), "category": category,
+        "quantity_type": quantity_type}.items() if v is not None}
+    return req_mod.get_analysis_field_requirements(
+        _repo(request), context, as_of=as_of)
+
+
 @router.get("/inspections/{inspection_id}")
 def get_inspection(inspection_id: str, request: Request):
     repo = _repo(request)
@@ -81,6 +114,22 @@ def analyze(inspection_id: str, body: AnalyzeRequest, request: Request):
             raise HTTPException(status_code=404, detail="product not found")
         product = full
     pid = product.get("product_id") or product.get("inspected_product_id")
+    # Stage 2 (Part T): reports/analysis use FINAL VERIFIED declaration
+    # values. Verified officer corrections overlay the product facts here
+    # (route-level only — the engine itself is untouched). Unverified
+    # feedback never changes the report; unresolved required fields reach
+    # the engine as-is and surface as NEEDS REVIEW, never invented.
+    try:
+        from app.services.learning.corrections import (
+            apply_verified_corrections,
+        )
+
+        _corrections = repo.list_corrections(inspection_id, pid) \
+            if hasattr(repo, "list_corrections") else []
+        if _corrections:
+            product = apply_verified_corrections(product, _corrections)
+    except Exception:
+        pass
     try:
         result = engine_mod.analyze(
             repo, inspection, product, repo.declarations_for(pid),

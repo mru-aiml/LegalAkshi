@@ -37,6 +37,16 @@ and reused across passes/images. Provider failures and empty results both
 yield NEEDS_REVIEW with null fields — inspection continues with manual
 entry instead of crashing.
 
+OpenCV preprocessing/analysis layer (opencv_preprocessor, zero OCR
+calls of its own): per-image quality diagnostics, EXIF transpose,
+pixel-geometry orientation vote (chooses the single rotation
+fallback's direction, never extra passes), conservative deskew and
+inner-quad rectification of targeted crops only, a heading-anchored
+layout map that tightens the ingredient band and proposes one
+nutrition-table region, and quality-driven variant ordering within
+the unchanged call budget. Every decision is recorded in timings /
+diagnostics; cv2 absence degrades gracefully to the legacy path.
+
 Every extracted field retains value, confidence, provenance (OCR), source
 image, bounding box, per-field status (DETECTED / NEEDS_REVIEW /
 NOT_DETECTED) and, for key fields seen on several photos, the reconciled
@@ -118,11 +128,31 @@ def preprocess(image_bytes: bytes) -> Any:
 
 def _decode(image_bytes: bytes) -> Any:
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
     except ImportError as exc:
         raise OcrError(f"Pillow is not installed: {exc}")
     try:
-        return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        # EXIF orientation first: phone captures usually store rotation in
+        # EXIF rather than pixels. Authoritative and free; no-op otherwise.
+        # (This is pixel normalization, not an OCR pass.) The tag value is
+        # recorded on the image so diagnostics can report it.
+        exif_applied = False
+        img = Image.open(io.BytesIO(image_bytes))
+        try:
+            tag = img.getexif().get(0x0112, 1)
+            exif_applied = tag not in (None, 1)
+        except Exception:
+            pass
+        try:
+            img = ImageOps.exif_transpose(img)
+        except Exception:
+            pass
+        img = img.convert("RGB")
+        try:
+            img.info["exif_orientation_applied"] = bool(exif_applied)
+        except Exception:
+            pass
+        return img
     except Exception as exc:
         raise OcrError(f"cannot decode image: {exc}")
 
@@ -131,6 +161,185 @@ def _to_array(img: Any) -> Any:
     import numpy as np
 
     return np.array(img)
+
+
+# ------------------------------------------------- Stage 3A dupes/norm ---
+# Difference-hash threshold for near-duplicate uploads (64-bit dHash on
+# a 9x8 grayscale thumb). Small enough that distinct panels never
+# collide; tolerant of recompression/rescaling of the same shot.
+# Reuse additionally requires both frames to carry real ink (or an
+# exact hash match): near-blank frames are cheap to OCR and must never
+# borrow another panel's text evidence.
+DHASH_THRESHOLD = 5
+DHASH_MIN_INK = 0.02
+
+
+def _dhash_pil(img: Any) -> tuple[int | None, float]:
+    """Perceptual difference hash + ink fraction of a PIL image.
+
+    Returns (hash_or_None, ink_fraction). Ink is the fraction of dark
+    thumb pixels; near-zero means an effectively blank frame.
+    """
+    try:
+        small = img.convert("L").resize((9, 8))
+        px = list(small.tobytes())
+        bits = 0
+        dark = 0
+        for y in range(8):
+            row = px[y * 9:(y + 1) * 9]
+            for x in range(8):
+                if row[x] < 128:
+                    dark += 1
+            for x in range(8):
+                bits = (bits << 1) | (1 if row[x + 1] > row[x] else 0)
+        return bits, dark / 72.0
+    except Exception:
+        return None, 0.0
+
+
+def _hamming(a: int, b: int) -> int:
+    """Hamming distance between two dHash ints."""
+    try:
+        return bin(int(a) ^ int(b)).count("1")
+    except Exception:
+        return 64
+
+
+def _normalize_working_image(original: Any,
+                             cv_orientation: dict[str, Any] | None,
+                             image_quality: dict[str, Any] | None = None,
+                             ) -> tuple[Any, dict[str, Any]]:
+    """Stage 3A.1/3A.2 gated working-image normalization.
+
+    Returns (working_image, metadata). The ORIGINAL upload bytes are
+    never altered (callers keep them for evidence); only this working
+    copy is adjusted, and only when evidence supports it:
+
+    - decisive transpose vote -> rotate +90 (the remaining 90-vs-270
+      ambiguity is resolved by the single rotation fallback, which
+      then tries 180 on the normalized frame);
+    - deskew when the helper applies it (same-size warp);
+    - perspective warp only when a confident quad is found AND the
+      readability grade is POOR (never on already-readable frames).
+
+    Low-confidence orientation keeps prior behavior and is marked
+    uncertain. Never raises.
+    """
+    from app.services.ocr import opencv_preprocessor as ocv
+
+    meta: dict[str, Any] = {
+        "orientation": {"original": "unknown", "normalized": "upright",
+                        "rotation_applied": 0, "uncertain": True,
+                        "exif_applied": False},
+        "deskew_applied": False, "deskew_angle": 0.0,
+        "perspective_corrected": False, "notes": []}
+    working = original
+    try:
+        try:
+            meta["orientation"]["exif_applied"] = bool(
+                getattr(original, "info", {}).get(
+                    "exif_orientation_applied", False))
+        except Exception:
+            pass
+        cv_orientation = cv_orientation or {}
+        decisive = bool(cv_orientation.get("decisive"))
+        transpose = bool(cv_orientation.get("transpose"))
+        if decisive and transpose:
+            try:
+                from PIL import Image as _Image
+
+                working = working.transpose(_Image.ROTATE_90)
+                meta["orientation"] = {
+                    "original": "transposed-90/270",
+                    "normalized": "upright-assumed",
+                    "rotation_applied": 90, "uncertain": False,
+                    "exif_applied": meta["orientation"]["exif_applied"]}
+                meta["notes"].append(
+                    "decisive transpose vote: working frame rotated +90; "
+                    "the 90-vs-270 ambiguity stays with the rotation "
+                    "fallback (180 on this frame)")
+            except Exception as exc:
+                meta["notes"].append(f"transpose rotation skipped: {exc}")
+        elif decisive:
+            meta["orientation"] = {
+                "original": "upright (0/180)",
+                "normalized": "upright",
+                "rotation_applied": 0, "uncertain": False,
+                "exif_applied": meta["orientation"]["exif_applied"]}
+        else:
+            meta["notes"].append(
+                "orientation evidence indecisive; original geometry kept")
+        # Deskew: same-size warp, helper-gated (0.5-12deg + text mask).
+        try:
+            import numpy as _np
+
+            gray = _np.asarray(working.convert("L"))
+            straight, applied, angle, notes = ocv.deskew_image(gray)
+            meta["notes"].extend(notes)
+            if applied:
+                from PIL import Image as _Image
+
+                working = _Image.fromarray(straight).convert("RGB")
+                meta["deskew_applied"] = True
+                meta["deskew_angle"] = angle
+        except Exception as exc:
+            meta["notes"].append(f"deskew skipped: {exc}")
+        # Perspective: confident inner quad AND poor readability only.
+        try:
+            readability = ""
+            if isinstance(image_quality, dict):
+                readability = str(image_quality.get("readability", ""))
+            if readability == "POOR":
+                quad = ocv.find_quad(_np.asarray(working))
+                meta["notes"].extend(quad.get("notes", []))
+                if quad.get("found") and (quad.get("confidence") or 0) \
+                        >= 0.70:
+                    import numpy as _np2
+
+                    from PIL import Image as _Image2
+
+                    rel = quad["quad"]
+                    h, w = working.size[1], working.size[0]
+                    pts = _np2.array(
+                        [[[x * w, y * h] for x, y in rel]],
+                        dtype="float32")
+                    ordered = ocv._order_points(pts.reshape(4, 2))
+                    if ordered is not None:
+                        (tl, tr, br, bl) = ordered
+                        width = int(max(
+                            float(_np2.linalg.norm(br - bl)),
+                            float(_np2.linalg.norm(tr - tl))))
+                        height = int(max(
+                            float(_np2.linalg.norm(tr - tl)),
+                            float(_np2.linalg.norm(bl - tl))))
+                        if width >= 40 and height >= 40:
+                            import cv2 as _cv2
+
+                            dst = _np2.array(
+                                [[0, 0], [width - 1, 0],
+                                 [width - 1, height - 1], [0, height - 1]],
+                                dtype="float32")
+                            matrix = _cv2.getPerspectiveTransform(
+                                ordered, dst)
+                            warped = _cv2.warpPerspective(
+                                _np2.asarray(working), matrix,
+                                (width, height),
+                                borderMode=_cv2.BORDER_REPLICATE)
+                            working = _Image2.fromarray(warped).convert(
+                                "RGB")
+                            meta["perspective_corrected"] = True
+                            meta["notes"].append(
+                                "confident quad on poor-readability frame: "
+                                "frontal warp applied")
+            else:
+                meta["notes"].append(
+                    "perspective warp skipped (readability not poor)")
+        except Exception as exc:
+            meta["notes"].append(f"perspective skipped: {exc}")
+    except Exception as exc:  # never break the pipeline
+        meta["notes"].append(f"normalization skipped: {exc}")
+        working = original
+    return working, meta
 
 
 def _enhance(img: Any, contrast: float = 1.3, sharpness: float = 1.2,
@@ -362,10 +571,23 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
         # Transposition is its own inverse with swapped dimensions.
         return _transpose_rect(rect, work_w, work_h) if transpose else rect
 
+    # Strong openers first so a gated CONTENTS/CONTAINS line (or an
+    # allergen "Contains: …" row) can never shadow the real heading.
+    heading_hits: list[int] = []
     for i, ln in enumerate(stage_lines):
         text = ln.text or ""
-        if not food_mod._is_ingredient_heading(text):
+        lo, hi = max(0, i - 2), i + 3
+        ctx = " ".join((l.text or "") for l in stage_lines[lo:hi]
+                       if (l.text or "") != text)
+        if not food_mod._is_ingredient_heading(text, ctx):
             continue
+        heading_hits.append(i)
+    heading_hits.sort(key=lambda i: (
+        0 if food_mod._heading_core(stage_lines[i].text or "")
+        not in ("contents", "contains") else 1, i))
+    for i in heading_hits:
+        ln = stage_lines[i]
+        text = ln.text or ""
         rect = _box_rect(ln.box)
         if rect is None:
             continue
@@ -392,16 +614,24 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
             col_x0 = body_col["x0"]
             col_x1 = body_col["x1"]
             col_source = "heading-column"
+            col_confidence = "high"
+            height_cap = 0.45
         else:
-            # No column resolved: legacy full-width band (unchanged).
+            # Stage 3A.7 conservative fallback: no column resolved, so
+            # do NOT fail open to a full-height band. Keep full width
+            # (no x evidence) but cap the height tighter (30%) and mark
+            # low confidence — coherence gates + NEEDS_REVIEW decide.
             col_x0, col_x1 = 0.0, work_w
             col_source = "full-width-fallback"
+            col_confidence = "low"
+            height_cap = 0.30
         _, _, _, y1 = hrect
         line_h = max(hrect[3] - hrect[1], 1.0)
         pad = min(max(0.6 * line_h, 4.0), 16.0)
         # Section stop: only lines inside the body column can end the
         # block, so a neighbouring column's MRP/care text never
-        # truncates (or enters) the ingredient paragraph. 45% cap stays.
+        # truncates (or enters) the ingredient paragraph. Height cap
+        # stays (45% column-resolved, 30% fallback).
         bottom = work_h
         for nxt in stage_lines[i + 1:i + 8]:
             nrect = _box_rect(getattr(nxt, "box", None))
@@ -413,7 +643,7 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
             if food_mod._is_section_head(nxt.text or "") and wr[1] > y1:
                 bottom = wr[1]
                 break
-        bottom = min(bottom, y1 + 0.45 * work_h)
+        bottom = min(bottom, y1 + height_cap * work_h)
         work_rect = (max(0.0, col_x0 - pad), y1,
                      min(work_w, col_x1 + pad),
                      min(work_h, y1 + max(bottom - y1, 0)))
@@ -426,6 +656,7 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
                 region["column"] = {
                     "x0": round(col_x0, 1), "x1": round(col_x1, 1),
                     "source": col_source,
+                    "confidence": col_confidence,
                     "frame": "transposed" if transpose else "stage"}
                 region["orientation"] = orientation.get("orientation", "0")
         break
@@ -434,7 +665,9 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
     mrp_status = statuses.get("mrp", {}).get("status")
     if mrp_status != "DETECTED":
         for ln in stage_lines:
-            if fields_mod._MRP_CTX.search(ln.text or "") and ln.box:
+            if (fields_mod._MRP_CTX.search(ln.text or "")
+                    or fields_mod._MRP_CTX_OCR.search(ln.text or "")) \
+                    and ln.box:
                 r = _box_rect(ln.box)
                 if r is not None:
                     pad = (r[3] - r[1]) * 1.2 + 4
@@ -452,7 +685,11 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
     mfg_status = statuses.get("manufacturing_date", {}).get("status")
     if mfg_status != "DETECTED":
         for ln in stage_lines:
-            if fields_mod._MFG_CTX.search(ln.text or "") and ln.box:
+            text = ln.text or ""
+            mfg_hit = fields_mod._MFG_CTX.search(text) or (
+                fields_mod._MFG_CTX_OCR.search(text)
+                and fields_mod._find_date(text) is not None)
+            if mfg_hit and ln.box:
                 r = _box_rect(ln.box)
                 if r is not None:
                     pad = (r[3] - r[1]) * 1.2 + 4
@@ -465,7 +702,9 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
     fssai_status = statuses.get("fssai_license", {}).get("status")
     if fssai_status != "DETECTED":
         for ln in stage_lines:
-            if fields_mod._FSSAI_CTX.search(ln.text or "") and ln.box:
+            if (fields_mod._FSSAI_CTX.search(ln.text or "")
+                    or fields_mod._FSSAI_CTX_OCR.search(ln.text or "")) \
+                    and ln.box:
                 r = _box_rect(ln.box)
                 if r is not None:
                     pad = (r[3] - r[1]) * 1.2 + 4
@@ -474,6 +713,27 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
                                    r[2] + pad * 3, r[3] + pad),
                          "smallprint")
                     break
+        else:
+            # Stage-2B §7: aggressively target a bare 14-digit run when
+            # OCR is weak and no licence context was read — the targeted
+            # re-OCR plus the context/validation gates decide; a barcode
+            # or phone run can never pass those gates.
+            import re as _re
+
+            for ln in stage_lines:
+                if not ln.box:
+                    continue
+                digits = _re.sub(r"\D", "",
+                                 str(ln.text or ""))
+                if len(digits) == 14:
+                    r = _box_rect(ln.box)
+                    if r is not None:
+                        pad = (r[3] - r[1]) * 1.2 + 4
+                        _add("fssai", (max(0, r[0] - pad * 3),
+                                       max(0, r[1] - pad),
+                                       r[2] + pad * 3, r[3] + pad),
+                             "smallprint")
+                        break
 
     # Consumer care: expand a care-context line; the MRP bottom band
     # already covers the bottom panel for non-front views, so no second
@@ -481,7 +741,14 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
     care_status = statuses.get("consumer_care", {}).get("status")
     if care_status != "DETECTED":
         for ln in stage_lines:
-            if fields_mod._CARE_CTX.search(ln.text or "") and ln.box:
+            text = ln.text or ""
+            care_hit = fields_mod._CARE_CTX.search(text) or (
+                fields_mod._CARE_CTX_OCR.search(text)
+                and (fields_mod._PHONE_1800.search(text)
+                     or fields_mod._PHONE_91.search(text)
+                     or fields_mod._PHONE_10.search(text)
+                     or "@" in text))
+            if care_hit and ln.box:
                 r = _box_rect(ln.box)
                 if r is not None:
                     pad = (r[3] - r[1]) * 1.5 + 6
@@ -502,6 +769,100 @@ def _propose_regions(label: str, stage_lines: list[OcrLine],
                             "reason": band.get("reason", "")})
             by_kind.add("ingredients-scan")
     return regions[:REGION_CALL_BUDGET]
+
+
+def _merge_layout_regions(
+        regions: list[dict[str, Any]],
+        layout: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Fold layout-map evidence into Stage-2 proposals (Part I).
+
+    - A high-confidence layout INGREDIENTS panel *tightens* (never
+      widens) the proposed ingredient x-range: a narrower column wins
+      over the full-width fallback band.
+    - A confident NUTRITION panel (heading anchor and/or table
+      structure) is appended as one targeted small-print region so the
+      nutrition table gets its own OCR pass instead of sharing the
+      pooled full-page text.
+    Everything stays inside REGION_CALL_BUDGET via the caller's slice;
+    the merge itself adds at most one region and never invents text.
+    """
+    if not layout:
+        return regions
+    out = list(regions)
+    panels = {r.get("kind"): r for r in (layout.get("regions") or [])
+              if isinstance(r, dict)}
+    for region in out:
+        if region.get("kind") not in ("ingredients", "ingredients-scan"):
+            continue
+        panel = panels.get("INGREDIENTS")
+        if panel is None or (panel.get("confidence") or 0) < 0.6:
+            continue
+        try:
+            px0, _, px1, _ = panel["rect"]
+            rx0, ry0, rx1, ry1 = region["rect"]
+            # Tighten only: intersect, keep at least 40% of the band.
+            nx0, nx1 = max(rx0, px0), min(rx1, px1)
+            if nx1 - nx0 >= 0.4 * max(rx1 - rx0, 1.0) and nx1 > nx0:
+                region["rect"] = (nx0, ry0, nx1, ry1)
+                region["layout_refined"] = {
+                    "panel_confidence": panel.get("confidence"),
+                    "reason": panel.get("reason", "")}
+        except (TypeError, IndexError, KeyError):
+            continue
+    nutri = panels.get("NUTRITION")
+    if nutri is not None and (nutri.get("confidence") or 0) >= 0.5:
+        if not any(r.get("kind") == "nutrition" for r in out):
+            try:
+                out.append({"kind": "nutrition", "rect": tuple(
+                    float(v) for v in nutri["rect"]),
+                    "prep": "smallprint",
+                    "reason": nutri.get("reason", ""),
+                    "layout_confidence": nutri.get("confidence")})
+            except (TypeError, ValueError):
+                pass
+    # Honor REGION_CALL_BUDGET: core evidence (ingredient + nutrition
+    # regions) keeps its slots; overflow drops from the tail, and the
+    # per-image targeted gate + dedupe remain the final backstop.
+    if len(out) > REGION_CALL_BUDGET:
+        core = [r for r in out if r.get("kind") in (
+            "ingredients", "ingredients-scan", "nutrition")]
+        rest = [r for r in out if r.get("kind") not in (
+            "ingredients", "ingredients-scan", "nutrition")]
+        out = (core + rest)[:REGION_CALL_BUDGET]
+    return out
+
+
+def choose_fallback_rotation(stage_lines: list[OcrLine],
+                             cv_orientation: dict[str, Any] | None
+                             ) -> int:
+    """Evidence-chosen single rotation fallback angle (Part E).
+
+    Returns 90 (sideways evidence: transposed geometry), 180
+    (upside-down evidence: horizontal pixel structure yet almost no
+    usable OCR lines), or 0 (no fallback — keep the existing gate).
+    At most ONE rotated full-page pass ever runs; this only *chooses
+    its direction*. 0-vs-180 can never be told apart from pixels
+    alone, so 180 fires solely when recognition catastrophically
+    failed on a strongly horizontal frame.
+    """
+    cv_orientation = cv_orientation or {}
+    usable = 0
+    for ln in stage_lines or []:
+        rect = _box_rect(getattr(ln, "box", None))
+        if rect is None:
+            continue
+        if rect[2] - rect[0] > 0 and rect[3] - rect[1] > 0:
+            usable += 1
+    if usable > 5:
+        return 0
+    # Upside-down evidence: strong horizontal pixel structure yet
+    # almost no usable OCR lines. (0-vs-180 is pixel-ambiguous, so
+    # this fires only on catastrophic recognition failure.)
+    if usable <= 2 and cv_orientation.get("decisive") is True and \
+            not cv_orientation.get("transpose"):
+        return 180
+    # Legacy default: sideways photos get the 90-degree pass.
+    return 90
 
 
 def _x_overlap(rect: tuple[float, float, float, float],
@@ -718,12 +1079,48 @@ def _crop_ingredient_band(original: Any,
     return crop
 
 
+def _prepare_crop_for_ocr(crop: Any, purpose: str,
+                          quality: dict[str, Any] | None = None
+                          ) -> tuple[Any, dict[str, Any]]:
+    """OpenCV crop conditioning before variant rendering (Part F/G).
+
+    Applies conservative deskew plus optional inner-quad rectification
+    to the PIL crop. Pure preprocessing — costs zero OCR calls. Returns
+    (crop, info) with applied flags for diagnostics; never raises.
+    """
+    info: dict[str, Any] = {"deskewed": False, "deskew_angle": 0.0,
+                            "perspective_corrected": False, "notes": []}
+    try:
+        from app.services.ocr import opencv_preprocessor as ocv
+
+        import numpy as np
+
+        arr = np.asarray(crop.convert("L"))
+        straight, applied, angle, notes = ocv.deskew_image(arr)
+        info["notes"].extend(notes)
+        if applied:
+            from PIL import Image as _Image
+
+            crop = _Image.fromarray(straight).convert("RGB")
+            info["deskewed"] = True
+            info["deskew_angle"] = angle
+        crop, corrected, rect_info = ocv.rectify_crop(crop)
+        info["notes"].extend(rect_info.get("notes", []))
+        if corrected:
+            info["perspective_corrected"] = True
+    except Exception as exc:
+        info["notes"].append(f"crop conditioning skipped: {exc}")
+    return crop, info
+
+
 def _run_ingredient_variants(provider: Any, original: Any,
                              rect_stage: tuple[float, float, float, float],
                              scale_xy: tuple[float, float],
                              label: str, index: int,
                              errors: list[str],
                              call_log: list[dict[str, Any]] | None = None,
+                             variant_order: tuple[str, ...] | None = None,
+                             quality: dict[str, Any] | None = None,
                              ) -> tuple[list[OcrLine], list[dict[str, Any]],
                                         dict[str, Any],
                                         list[tuple[str, str, float]]]:
@@ -732,27 +1129,41 @@ def _run_ingredient_variants(provider: Any, original: Any,
     Each variant is reconstructed and coherence-scored on its own lines;
     the loop aborts once a variant reads coherently. Only the winning
     variant's lines are returned (losing variants would duplicate garbage
-    into the pooled text). Returns (lines, variant_timings, best_score,
-    variant_texts) where variant_texts holds (name, text, coherence) per
-    ran variant for disagreement detection. Every provider call is logged
-    to ``call_log`` with its crop rect, size, variant and duration.
+    into the pooled text). ``variant_order`` (default INGREDIENT_VARIANTS)
+    only reorders which bounded variants run first — the budget never
+    grows. Returns (lines, variant_timings, best_score, variant_texts)
+    where variant_texts holds (name, text, coherence) per ran variant
+    for disagreement detection. Every provider call is logged to
+    ``call_log`` with its crop rect, size, variant and duration.
     """
     from app.services.ocr import food as food_mod
+    from app.services.ocr import opencv_preprocessor as ocv
 
     crop = _crop_ingredient_band(original, rect_stage, scale_xy)
     if crop is None:
         return [], [], {"score": 0.0, "reasons": ["no variant ran"]}, []
+    crop_conditioning: dict[str, Any] = {"deskewed": False,
+                                         "perspective_corrected": False}
+    try:
+        crop, _cond = _prepare_crop_for_ocr(crop, "ingredients", quality)
+        crop_conditioning.update({
+            "deskewed": bool(_cond.get("deskewed")),
+            "perspective_corrected": bool(
+                _cond.get("perspective_corrected"))})
+    except Exception:
+        pass
     best_lines: list[OcrLine] = []
     best_score: dict[str, Any] = {"score": 0.0, "reasons": ["no variant ran"]}
     variant_timings: list[dict[str, Any]] = []
     variant_texts: list[tuple[str, str, float]] = []
-    for num, vname in enumerate(INGREDIENT_VARIANTS, start=1):
+    order = list(variant_order or INGREDIENT_VARIANTS)
+    for num, vname in enumerate(order, start=1):
         if num > INGREDIENT_VARIANT_BUDGET:
             break
         side = f"{label}:region:ingredients:v{num}-{vname}"
         t0 = time.perf_counter()
         try:
-            arr = _prep_ingredient_variant(crop, vname)
+            arr = ocv.prepare_variant(crop, vname)
         except OcrError as exc:
             variant_timings.append({"kind": f"ingredients:v{num}-{vname}",
                                     "ms": 0.0, "lines": 0,
@@ -780,6 +1191,11 @@ def _run_ingredient_variants(provider: Any, original: Any,
             best_lines = vlines
         if scored["score"] >= INGREDIENT_COHERENT_ABORT:
             break  # coherent read: further variants would only cost time
+    if variant_timings:
+        variant_timings[0]["deskewed"] = crop_conditioning.get(
+            "deskewed", False)
+        variant_timings[0]["perspective_corrected"] = crop_conditioning.get(
+            "perspective_corrected", False)
     return best_lines, variant_timings, best_score, variant_texts
 
 
@@ -952,12 +1368,16 @@ def _norm_candidate(key: str, value: Any, unit: Any = None) -> Any:
     return text.lower()
 
 
-def _reconcile(key: str, per_image: list[dict[str, Any]]) -> dict[str, Any]:
+def _reconcile(key: str, per_image: list[dict[str, Any]],
+               role_rank: dict[str, int] | None = None) -> dict[str, Any]:
     """Merge one field's per-image hits.
 
     Agreement (or a single source) → best confidence wins with all sources
     retained. Conflict → NEEDS_REVIEW with every candidate preserved, so an
-    officer — never a heuristic — breaks the tie.
+    officer — never a heuristic — breaks the tie. ``role_rank`` maps an
+    image label to its field-priority rank (lower wins) and breaks only
+    exact ties of the legacy key — reported values and confidences are
+    never synthesized.
     """
     if not per_image:
         return {"value": None, "confidence": None, "status": "NOT_DETECTED",
@@ -966,9 +1386,22 @@ def _reconcile(key: str, per_image: list[dict[str, Any]]) -> dict[str, Any]:
         key, per_image[0]["value"], per_image[0].get("unit"))
     if all(_norm_candidate(key, h["value"], h.get("unit")) == first
            for h in per_image):
-        ordered = sorted(per_image,
-                         key=lambda h: (h.get("confidence") or 0),
-                         reverse=True)
+        # Rank by cross-image agreement, then OCR confidence, then
+        # front-panel and box evidence. The REPORTED confidence stays
+        # the winner's measured OCR confidence (never synthesized);
+        # ranking only decides which agreed candidate leads.
+        _rr = role_rank or {}
+
+        def _rank_key(h: dict[str, Any]) -> tuple:
+            agree = sum(
+                1 for o in per_image
+                if _norm_candidate(key, o["value"], o.get("unit"))
+                == _norm_candidate(key, h["value"], h.get("unit")))
+            return (agree, h.get("confidence") or 0,
+                    h.get("image") == "front", h.get("box") is not None,
+                    -_rr.get(h.get("image"), 99))
+
+        ordered = sorted(per_image, key=_rank_key, reverse=True)
         best = ordered[0]
         conf = best.get("confidence")
         return {
@@ -1066,7 +1499,31 @@ def _reconcile_fields(per_image_detailed: list[dict[str, Any]],
                       per_image_lines: list[list[OcrLine]] | None = None
                       ) -> dict[str, Any]:
     """Overlay cross-image reconciliation onto the pooled extraction."""
+    from app.services.ocr import image_roles as _roles_mod
+
     out = {k: dict(v) for k, v in pooled.items()}
+    # Stage 3C: role-aware tie-breaks. Roles come from Stage-1 lines
+    # only (region re-OCR lines must not sway panel classification).
+    _role_ranks: dict[str, dict[str, int]] = {}
+    try:
+        _labels = sorted({str(getattr(ln, "image", "") or "")
+                          for lines in (per_image_lines or [])
+                          for ln in (lines or []) if
+                          getattr(ln, "image", None)})
+        _stage1 = {
+            _lab: [ln for lines in (per_image_lines or [])
+                   for ln in (lines or [])
+                   if getattr(ln, "image", None) == _lab
+                   and getattr(ln, "variant", "stage1") == "stage1"]
+            for _lab in _labels}
+        _rmap = _roles_mod.classify_roles(_labels, _stage1)
+        for _key in _RECONCILED_KEYS:
+            _order = _roles_mod.ordered_labels_for_field(
+                _key, _labels,
+                {lab: (_rmap.get(lab) or "UNKNOWN") for lab in _labels})
+            _role_ranks[_key] = {lab: i for i, lab in enumerate(_order)}
+    except Exception:
+        _role_ranks = {}
     for key in _RECONCILED_KEYS:
         hits = []
         for img_det in per_image_detailed:
@@ -1108,7 +1565,7 @@ def _reconcile_fields(per_image_detailed: list[dict[str, Any]],
                                "image_index": solo.get("image_index"),
                                "box": solo.get("box")}
             continue
-        merged = _reconcile(key, hits)
+        merged = _reconcile(key, hits, _role_ranks.get(key))
         out[key] = {**out[key], **merged}
         if key == "quantity":
             if merged["value"] is None:
@@ -1129,13 +1586,21 @@ def _reconcile_fields(per_image_detailed: list[dict[str, Any]],
 # --------------------------------------------------------------- pipeline ---
 def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                         provider: Any | None = None,
-                        tess_provider: Any | None = None) -> dict[str, Any]:
+                        tess_provider: Any | None = None,
+                        targeted_stages: bool = True) -> dict[str, Any]:
     """Run staged OCR over N package images and combine evidence.
 
     ``tess_provider`` is opt-in: when supplied (or enabled via
     :func:`configure_tesseract_fallback`), weak RapidOCR ingredient reads
     are reconciled against one targeted Tesseract crop call (ingredient
     regions only). Otherwise pure-RapidOCR behaviour is preserved.
+
+    ``targeted_stages=False`` is a legacy/benchmark mode: Stage-1
+    full-page OCR plus deterministic field assembly only (no targeted
+    region crops, low-confidence band, rotation fallback, or Tesseract).
+    Decode, duplicate reuse, normalization, food/veg layers and budgets
+    stay identical, so ``stage3c_benchmark.py`` can report a genuine
+    generic-vs-field-aware delta on the same fixtures.
     """
     from app.services.ocr.rapidocr_provider import RapidOCRProvider
 
@@ -1165,7 +1630,17 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
     call_log: list[dict[str, Any]] = []
     # Per-image Stage-1 lines + geometry for the diagnostics artifact.
     diag_stage: dict[str, Any] = {}
+    # Stage 3A.5: completed images for near-duplicate reuse. Maps label
+    # -> {dhash, my_lines, serial-ready data, timings, diag}. A duplicate
+    # is retained as evidence but skips every provider call.
+    completed: dict[str, dict[str, Any]] = {}
 
+    # NOTE (Stage 3A/3B performance): images are processed sequentially
+    # on purpose. The RapidOCR engine is a shared class-level singleton
+    # whose thread-safety is not guaranteed, and targeted crops reuse
+    # per-image budgets that are simpler to enforce in one pass.
+    # Parallelism is deliberately NOT introduced; speed comes from hard
+    # call budgets, duplicate reuse, and early abort on coherent reads.
     for index, (raw, label) in enumerate(supplied):
         t_img = time.perf_counter()
         img_timings: dict[str, Any] = {"regions": []}
@@ -1186,7 +1661,10 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
             per_image_lines.append([])
             continue
         try:
+            _t_decode = time.perf_counter()
             original = _decode(raw)
+            img_timings["decode_ms"] = round(
+                (time.perf_counter() - _t_decode) * 1000, 1)
         except OcrError as exc:
             log.warning("ocr %s preprocess failed: %s", label, exc)
             errors.append(str(exc))
@@ -1195,7 +1673,137 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                                   "error": str(exc), "skipped": False})
             per_image_lines.append([])
             continue
+        # Stage 3A.5 duplicate detection: perceptual hash of the decoded
+        # frame. Exact/near duplicates reuse the earlier image's OCR
+        # lines (retagging image/index) and skip every provider call.
+        # All images stay in the inspection as evidence; pooled text is
+        # not duplicated (only per-image evidence lists carry the copy).
+        # Guard: reuse needs a hash match AND real ink on both frames
+        # (or an exact match) — near-blank frames are cheap to OCR and
+        # must never borrow another panel's text.
+        dup_hash, dup_ink = _dhash_pil(original)
+        dup_of: str | None = None
+        dup_dist: int | None = None
+        if dup_hash is not None:
+            for _plab, _prec in completed.items():
+                if _prec.get("dhash") is None:
+                    continue
+                _dist = _hamming(dup_hash, _prec["dhash"])
+                _ink_ok = (_dist == 0) or (
+                    dup_ink >= DHASH_MIN_INK
+                    and (_prec.get("ink") or 0.0) >= DHASH_MIN_INK)
+                if _dist <= DHASH_THRESHOLD and _ink_ok and (
+                        dup_dist is None or _dist < dup_dist):
+                    dup_of, dup_dist = _plab, _dist
+        if dup_of is not None:
+            _src = completed[dup_of]
+            my_lines = []
+            for _ln in _src.get("my_lines", []):
+                _cp = OcrLine(text=_ln.text, confidence=_ln.confidence,
+                              box=_ln.box, image=label)
+                object.__setattr__(
+                    _cp, "variant", getattr(_ln, "variant", "stage1"))
+                object.__setattr__(_cp, "image_index", index)
+                my_lines.append(_cp)
+            per_image_lines.append(my_lines)
+            serial = [{"text": ln.text, "confidence": ln.confidence,
+                       "box": ln.box, "image": label, "image_index": index,
+                       "variant": getattr(ln, "variant", "reused-ocr")}
+                      for ln in my_lines]
+            image_results.append({
+                "image": label, "image_index": index,
+                "text": "\n".join(ln.text for ln in my_lines),
+                "lines": serial, "variants": ["reused-ocr"],
+                "error": None, "skipped": False,
+                "duplicate_of": dup_of, "ocr_reused_from": dup_of,
+                "duplicate_distance": dup_dist})
+            img_timings["image_ms"] = round(
+                (time.perf_counter() - t_img) * 1000, 1)
+            img_timings["stage1_ms"] = 0.0
+            img_timings["stage1_lines"] = len(my_lines)
+            img_timings["regions"] = []
+            img_timings["targeted_used"] = 0
+            img_timings["rotation_ms"] = 0.0
+            img_timings["rotated"] = False
+            img_timings["duplicate_of"] = dup_of
+            img_timings["ocr_reused_from"] = dup_of
+            img_timings["duplicate_distance"] = dup_dist
+            for _k in ("image_quality", "image_quality_notes",
+                       "cv_orientation", "orientation", "normalization"):
+                if _k in (_src.get("img_timings") or {}):
+                    img_timings[_k] = (_src["img_timings"][_k])
+            timings["images"][label] = img_timings
+            _src_diag = (_src.get("diag") or {})
+            diag_stage[label] = {**_src_diag, "index": index,
+                                 "reused_from": dup_of}
+            log.info("ocr %s: near-duplicate of %s (dhash distance %s); "
+                     "reused %d lines, 0 provider calls",
+                     label, dup_of, dup_dist, len(my_lines))
+            continue
+
+        # OpenCV pre-pass (zero OCR calls): quality diagnostics drive
+        # variant order + deskew/rectify decisions; the pixel orientation
+        # vote informs the single rotation fallback below.
+        from app.services.ocr import opencv_preprocessor as _ocv
+
+        try:
+            import numpy as _np
+
+            _full_arr = _np.asarray(original)
+        except Exception:
+            _full_arr = None
+        image_quality: dict[str, Any] = _ocv.analyze_quality(_full_arr) \
+            if _full_arr is not None else {"cv2": False, "notes": [
+                "pixel buffer unavailable; quality neutral"]}
+        cv_orientation: dict[str, Any] = _ocv.estimate_orientation(
+            _full_arr) if _full_arr is not None else {
+            "transpose": False, "decisive": False, "notes": []}
+        img_timings["image_quality"] = {
+            k: (v.get("grade") if isinstance(v, dict) and "grade" in v
+                else v)
+            for k, v in image_quality.items() if k != "notes"}
+        img_timings["image_quality_notes"] = image_quality.get("notes", [])
+        img_timings["cv_orientation"] = {
+            "transpose": cv_orientation.get("transpose"),
+            "decisive": cv_orientation.get("decisive"),
+            "ratio": cv_orientation.get("ratio")}
+        # Stage 3A.1/3A.2 gated working-image normalization (zero OCR
+        # calls): decisive transpose votes rotate the working frame
+        # upright; helper-gated deskew applies in place; perspective
+        # warps only poor-readability frames with a confident quad.
+        # The upload bytes are never altered; low-confidence geometry
+        # keeps prior behavior and is marked uncertain.
+        _t_norm = time.perf_counter()
+        working, norm_meta = _normalize_working_image(
+            original, cv_orientation, image_quality)
+        img_timings["normalization_ms"] = round(
+            (time.perf_counter() - _t_norm) * 1000, 1)
+        try:
+            norm_meta["decoded_size"] = [original.size[0],
+                                         original.size[1]]
+        except Exception:
+            pass
+        img_timings["normalization"] = norm_meta
+        norm_transpose = bool(
+            norm_meta.get("orientation", {}).get("rotation_applied"))
+        # Pipeline-consistent frame from here on (as EXIF transpose
+        # already was): crops, stage geometry and boxes all live in the
+        # working frame; the upload bytes stay pristine for evidence.
+        original = working
+        try:
+            import numpy as _np2
+
+            gray_small = _ocv._as_gray_small(
+                _np2.asarray(working), max_dim=400)
+        except Exception:
+            gray_small = None
         orig_w, orig_h = original.size
+        # Stage 3 §1/§16: preprocessing covers decode + EXIF transpose +
+        # quality + orientation vote + gated normalization (zero OCR
+        # calls; the upload bytes stay pristine for evidence — crops
+        # upscale, never the full frame).
+        img_timings["preprocessing_ms"] = round(
+            (time.perf_counter() - t_img) * 1000, 1)
 
         # STAGE 1 — exactly ONE full-page OCR per image (budget:
         # MAX_FULL_PAGE_CALLS == number of images). Never rerun full-page
@@ -1234,11 +1842,29 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         # At most ONE Tesseract ingredient call per image: the first
         # ingredient region that needs fallback consumes the budget.
         tess_used_this_image = False
-        if stage_lines:
+        t_regions = time.perf_counter()
+        img_timings["region_detection_ms"] = 0.0
+        if stage_lines and targeted_stages:
             statuses = extract_with_status(stage_lines)
             regions = _propose_regions(label, stage_lines, statuses,
                                        (stage_w, stage_h))
+            # Layout evidence (Part I): heading-anchored panels + table
+            # structure refine proposals within the existing budget —
+            # tighter ingredient x-range, plus a nutrition-region OCR
+            # pass when a table is actually detected.
+            try:
+                layout = _ocv.detect_layout(stage_lines, gray_small,
+                                            (stage_w, stage_h))
+                regions = _merge_layout_regions(regions, layout)
+                img_timings["layout_notes"] = layout.get("notes", [])
+            except Exception as exc:
+                img_timings["layout_notes"] = [
+                    f"layout detection skipped: {exc}"]
             sx, sy = orig_w / max(stage_w, 1), orig_h / max(stage_h, 1)
+            # Stage 3 §16: region/layout discovery time (proposals +
+            # layout merge; pure geometry, zero OCR calls).
+            img_timings["region_detection_ms"] = round(
+                (time.perf_counter() - t_regions) * 1000, 1)
             for region in regions:
                 if targeted_used >= MAX_TARGETED_CALLS_PER_IMAGE:
                     log.info("ocr %s targeted budget exhausted (%d); "
@@ -1265,10 +1891,14 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                     # RapidOCR reads (ingredient crops only, one call).
                     from app.services.ocr import food as _food_mod
 
+                    ing_variant_order = tuple(_ocv.choose_variant(
+                        "ingredients", image_quality))
                     ing_lines, ing_times, ing_best, variant_texts = \
                         _run_ingredient_variants(
                             provider, original, region["rect"], (sx, sy),
-                            label, index, errors, call_log)
+                            label, index, errors, call_log,
+                            variant_order=ing_variant_order,
+                            quality=image_quality)
                     img_timings["regions"].extend(ing_times)
                     targeted_used += len(ing_times)
                     seen_rects.append(tuple(region["rect"]))
@@ -1295,6 +1925,8 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                             if col_rejected and col_rejected[0].get(
                                 "text", "") != \
                             "(column filter abstained: kept all)" else 0
+                        ing_times[0]["variant_order"] = list(
+                            ing_variant_order)
                         ing_times[0]["rect"] = [round(v, 1) for v in
                                                 region["rect"]]
                         ing_times[0]["orientation"] = region.get(
@@ -1346,30 +1978,58 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                              len(ing_times), ing_best.get("score"),
                              fb_info.get("triggered"))
                     continue
-                x0, y0, x1, y1 = region["rect"]
-                crop = original.crop((
-                    max(0, int(x0 * sx)), max(0, int(y0 * sy)),
-                    min(orig_w, int(x1 * sx)), min(orig_h, int(y1 * sy))))
-                if crop.size[0] < 8 or crop.size[1] < 8:
-                    continue
+                # Stage 3C §C: declaration crops go through the single
+                # reusable field path (one crop, one OCR pass, evidence
+                # preserved). Budgets, tagging, and timings are unchanged.
+                from app.services.ocr import field_ocr as _field_ocr
+
+                _kind_to_field = {
+                    "mrp": "mrp", "mfg_date": "manufacturing_date",
+                    "fssai": "fssai_license", "care": "consumer_care",
+                    "nutrition": None, "lowconf-band": None}
+                _field_type = _kind_to_field.get(region["kind"])
+                _region = {"rect": tuple(region["rect"]),
+                           "scale": (sx, sy), "prep": region["prep"]}
+
+                def _single_pass(arr: Any, prep_meta: dict[str, Any],
+                                 _region=region, _field_type=_field_type,
+                                 _label=label, _sx=sx, _sy=sy) -> list:
+                    _ = prep_meta
+                    return _tag(
+                        _call_provider(
+                            provider, arr,
+                            f"{_label}:region:{_region['kind']}", errors,
+                            call_log,
+                            {"image_id": _label, "stage": "targeted",
+                             "purpose": _region["kind"],
+                             "crop_rect": [round(v, 1)
+                                           for v in _region["rect"]],
+                             "preprocessing_variant": _region["prep"],
+                             "field_type": _field_type,
+                             "reason": f"field unresolved after stage1: "
+                                       f"{_region['kind']}"}),
+                        _label, index, f"region:{_region['kind']}")
+
                 tr0 = time.perf_counter()
-                region_lines = _tag(
-                    _call_provider(
-                        provider, _prep_region(crop, region["prep"]),
-                        f"{label}:region:{region['kind']}", errors,
-                        call_log,
-                        {"image_id": label, "stage": "targeted",
-                         "purpose": region["kind"],
-                         "crop_rect": [round(v, 1)
-                                       for v in region["rect"]],
-                         "preprocessing_variant": region["prep"],
-                         "reason": f"field unresolved after stage1: "
-                                   f"{region['kind']}"}),
-                    label, index, f"region:{region['kind']}")
+                _fout = _field_ocr.extract_field_from_region(
+                    original, _region, _field_type, provider,
+                    image_id=label, call_provider=_single_pass)
+                if not (_fout.get("lines") or []) and _fout.get(
+                        "error") == "degenerate crop":
+                    continue  # nothing to OCR; budget untouched
+                region_lines = _fout.get("lines") or []
+                _prep = _fout.get("preprocessing") or {}
                 img_timings["regions"].append({
                     "kind": region["kind"],
+                    "field_type": _field_type,
                     "ms": round((time.perf_counter() - tr0) * 1000, 1),
-                    "lines": len(region_lines)})
+                    "lines": len(region_lines),
+                    "deskewed": _prep.get("deskewed", False),
+                    "perspective_corrected": _prep.get(
+                        "perspective_corrected", False),
+                    "crop_rect": [round(v, 1) for v in region["rect"]],
+                    "crop_size": _prep.get("crop_size"),
+                    "error": _fout.get("error")})
                 targeted_used += 1
                 seen_rects.append(tuple(region["rect"]))
                 my_lines.extend(region_lines)
@@ -1380,7 +2040,8 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         # Stage-1 lines, only while a required field is still unresolved
         # AND the per-image targeted budget is not exhausted AND the band
         # does not duplicate a region already OCR'd.
-        if my_lines and targeted_used < MAX_TARGETED_CALLS_PER_IMAGE:
+        if my_lines and targeted_stages \
+                and targeted_used < MAX_TARGETED_CALLS_PER_IMAGE:
             check_now = extract_with_status(my_lines)
             if any(check_now.get(f, {}).get("status") != "DETECTED"
                    for f in REQUIRED_FIELDS):
@@ -1401,6 +2062,8 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                         min(orig_w, int(x1 * sx)), min(orig_h, int(y1 * sy))))
                     if crop.size[0] < 8 or crop.size[1] < 8:
                         continue
+                    crop, band_info = _prepare_crop_for_ocr(
+                        crop, band["prep"], image_quality)
                     tr0 = time.perf_counter()
                     band_lines = _tag(
                         _call_provider(
@@ -1418,40 +2081,69 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                     img_timings["regions"].append({
                         "kind": band["kind"],
                         "ms": round((time.perf_counter() - tr0) * 1000, 1),
-                        "lines": len(band_lines)})
+                        "lines": len(band_lines),
+                        "deskewed": band_info.get("deskewed", False),
+                        "perspective_corrected": band_info.get(
+                            "perspective_corrected", False)})
                     targeted_used += 1
                     seen_rects.append(tuple(band["rect"]))
                     my_lines.extend(band_lines)
                     break  # one band max per image
 
         # STAGE 4 — rotation only when the required fields are ALL still
-        # unresolved and Stage 1 barely saw any text (sideways photo).
-        # At most one rotated full-frame pass per image; logged as a
-        # full-page call (the sole permitted full-page rerun).
+        # unresolved and Stage 1 barely saw any text. At most one
+        # rotated full-frame pass per image; its DIRECTION is chosen by
+        # evidence (transpose geometry -> 90, upside-down pattern ->
+        # 180, legacy default 90). When Stage 3A normalization already
+        # rotated a decisive-transpose frame +90 and Stage 1 still
+        # failed (or still reads transposed), the remaining hypothesis
+        # is the other transpose direction: exactly one 180 pass on the
+        # normalized frame. Logged as a full-page call (the sole
+        # permitted full-page rerun).
         t0 = time.perf_counter()
         img_timings["rotation_ms"] = 0.0
         img_timings["rotated"] = False
-        if my_lines and len(stage_lines) <= 5:
+        _still_transposed = (
+            norm_transpose
+            and _detect_orientation(stage_lines).get("transpose"))
+        if my_lines and targeted_stages and (
+                len(stage_lines) <= 5 or _still_transposed):
             check = extract_with_status(my_lines)
-            if all(check.get(f, {}).get("status") != "DETECTED"
-                   for f in REQUIRED_FIELDS):
-                turned = _enhance(_fit(
-                    original.rotate(90, expand=True), STAGE1_MAX_DIM))
-                rot_lines = _tag(
-                    _call_provider(
-                        provider, _to_array(turned),
-                        f"{label}:rot90", errors, call_log,
-                        {"image_id": label, "stage": "full-page-rotated",
-                         "purpose": "rotation-fallback",
-                         "crop_rect": None,
-                         "preprocessing_variant": "rot90-enhance",
-                         "reason": "all required fields unresolved with "
-                                   "<=5 stage1 lines (sideways photo)"}),
-                    label, index, "rot90")
-                img_timings["rotation_ms"] = round(
-                    (time.perf_counter() - t0) * 1000, 1)
-                img_timings["rotated"] = True
-                my_lines.extend(rot_lines)
+            if _still_transposed or all(
+                    check.get(f, {}).get("status") != "DETECTED"
+                    for f in REQUIRED_FIELDS):
+                if norm_transpose:
+                    rot_angle = 180
+                    rot_reason = ("transpose-normalized frame still "
+                                  "unresolved; trying the other transpose "
+                                  "direction (180 on normalized frame)")
+                else:
+                    rot_angle = choose_fallback_rotation(stage_lines,
+                                                         cv_orientation)
+                    rot_reason = (
+                        "all required fields unresolved with "
+                        "<=5 stage1 lines; evidence-chosen "
+                        f"{rot_angle}deg fallback")
+                if rot_angle:
+                    turned = _enhance(_fit(
+                        original.rotate(rot_angle, expand=True),
+                        STAGE1_MAX_DIM))
+                    rot_lines = _tag(
+                        _call_provider(
+                            provider, _to_array(turned),
+                            f"{label}:rot{rot_angle}", errors, call_log,
+                            {"image_id": label, "stage": "full-page-rotated",
+                             "purpose": "rotation-fallback",
+                             "crop_rect": None,
+                              "preprocessing_variant":
+                                  f"rot{rot_angle}-enhance",
+                              "reason": rot_reason}),
+                        label, index, f"rot{rot_angle}")
+                    img_timings["rotation_ms"] = round(
+                        (time.perf_counter() - t0) * 1000, 1)
+                    img_timings["rotated"] = True
+                    img_timings["fallback_angle"] = rot_angle
+                    my_lines.extend(rot_lines)
 
         per_image_lines.append(my_lines)
         all_lines.extend(my_lines)
@@ -1461,7 +2153,8 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
                   for ln in my_lines]
         variants = ["stage1", *[r["kind"] for r in img_timings["regions"]]]
         if img_timings["rotated"]:
-            variants.append("rot90")
+            variants.append(
+                f"rot{img_timings.get('fallback_angle', 90)}")
         image_results.append({
             "image": label, "image_index": index,
             "text": "\n".join(ln.text for ln in my_lines),
@@ -1470,6 +2163,12 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         img_timings["image_ms"] = round((time.perf_counter() - t_img) * 1000,
                                         1)
         timings["images"][label] = img_timings
+        # Stage 3A.5 completion record for near-duplicate reuse by later
+        # images in this same call (hash + ink + final lines + timings).
+        completed[label] = {"dhash": dup_hash, "ink": dup_ink,
+                            "my_lines": my_lines,
+                            "img_timings": img_timings,
+                            "diag": diag_stage.get(label, {})}
         log.info("ocr %s: stage1=%sms/%d lines regions=%d rotation=%s total=%sms",
                  label, img_timings["stage1_ms"],
                  img_timings["stage1_lines"],
@@ -1540,6 +2239,73 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
     t_sym = time.perf_counter()
     veg = _safe_veg([raw for raw, _ in supplied])
     timings["symbol_ms"] = round((time.perf_counter() - t_sym) * 1000, 1)
+    # Stage 3B.12 targeted symbol candidates (no OCR cost): small
+    # square-outline contours per image, in relative coordinates, with
+    # nearby OCR text attached for context. The colour verdict still
+    # comes from detect_veg_symbol; regions.py turns candidates into a
+    # VEG_SYMBOL vision ROI. Never raises.
+    try:
+        from app.services.ocr import veg_symbol as _veg_mod
+
+        for _raw, _label in supplied:
+            _info = diag_stage.get(_label)
+            if not isinstance(_info, dict) or _raw is None:
+                continue
+            try:
+                _cands = _veg_mod.find_symbol_candidates(_raw)
+            except Exception:
+                _cands = []
+            _stage = _info.get("stage_lines") or []
+            for _cand in _cands:
+                try:
+                    _rb = _cand.get("rel_box") or []
+                    _cx = (_rb[0] + _rb[2]) / 2.0
+                    _cy = (_rb[1] + _rb[3]) / 2.0
+                    _near = []
+                    for _sl in _stage:
+                        _bb = _box_rect(_sl.get("box"))
+                        if _bb is None:
+                            continue
+                        _sw, _sh = 1.0, 1.0
+                        try:
+                            _ss = _info.get("stage_size") or [1, 1]
+                            _sw = float(_ss[0]) or 1.0
+                            _sh = float(_ss[1]) or 1.0
+                        except Exception:
+                            pass
+                        _ncx = ((_bb[0] + _bb[2]) / 2.0) / _sw
+                        _ncy = ((_bb[1] + _bb[3]) / 2.0) / _sh
+                        if abs(_ncx - _cx) < 0.15 and \
+                                abs(_ncy - _cy) < 0.15:
+                            _near.append(str(_sl.get("text", "")))
+                    _cand["nearby_text"] = " | ".join(_near)[:120]
+                except Exception:
+                    _cand["nearby_text"] = ""
+            _info["veg_candidates"] = _cands
+    except Exception:
+        pass
+    # Stage 3C §K: classify the single best symbol-candidate crop (never
+    # whole-image colours alone, never ingredient names). Ambiguity stays
+    # UNKNOWN / NEEDS_REVIEW; the verdict is evidence, not a verdict on
+    # compliance.
+    try:
+        from app.services.ocr import veg_symbol as _veg_mod2
+
+        _best = None
+        for _raw, _label in supplied:
+            if _raw is None:
+                continue
+            for _cand in ((diag_stage.get(_label) or {}).get(
+                    "veg_candidates") or []):
+                _sc = float(_cand.get("score") or 0)
+                if _best is None or _sc > _best[0]:
+                    _best = (_sc, _raw, _label, _cand.get("rel_box"))
+        if _best is not None and isinstance(veg, dict):
+            _verdict = _veg_mod2.classify_symbol_crop(_best[1], _best[3])
+            _verdict["image"] = _best[2]
+            veg["crop_verdict"] = _verdict
+    except Exception:
+        pass
     food_timings = (food.get("timings", {}) if isinstance(food, dict)
                     else {})
     timings["nutrition_ms"] = food_timings.get("nutrition_ms", 0.0)
@@ -1580,7 +2346,23 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         label: (v.get("image_ms") if isinstance(v, dict) else None)
         for label, v in timings["images"].items()}
     timings["stage_timings"] = {
+        "preprocessing_ms": round(sum(
+            float(v.get("preprocessing_ms", 0) or 0)
+            for v in timings["images"].values()
+            if isinstance(v, dict)), 1),
+        "decode_ms": round(sum(
+            float(v.get("decode_ms", 0) or 0)
+            for v in timings["images"].values()
+            if isinstance(v, dict)), 1),
+        "normalization_ms": round(sum(
+            float(v.get("normalization_ms", 0) or 0)
+            for v in timings["images"].values()
+            if isinstance(v, dict)), 1),
         "full_page_ms": timings.get("stage1_ms", 0.0),
+        "region_detection_ms": round(sum(
+            float(v.get("region_detection_ms", 0) or 0)
+            for v in timings["images"].values()
+            if isinstance(v, dict)), 1),
         "targeted_ms": round(
             float(timings.get("ingredient_ms", 0) or 0)
             + float(timings.get("declaration_ms", 0) or 0), 1),
@@ -1590,6 +2372,64 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         "reconciliation_ms": timings.get("reconciliation_ms", 0.0),
         "symbol_ms": timings.get("symbol_ms", 0.0),
     }
+    # Stage 3C §M: duplicate reuse accounting (evidence retained, zero
+    # provider calls for reused frames).
+    timings["duplicates_reused"] = sum(
+        1 for r in image_results
+        if isinstance(r, dict) and r.get("duplicate_of"))
+    # Stage 3 §2/§19: image roles + field resolution counts. Roles come
+    # from upload slots tempered by OCR evidence; counts come from the
+    # reconciled per-field statuses (DETECTED / NEEDS_REVIEW /
+    # NOT_DETECTED) — never a compliance verdict, never one generic
+    # "accuracy" number. Images that reused a duplicate's OCR are
+    # labelled DUPLICATE (evidence retained, extraction skipped).
+    _t_roles = time.perf_counter()
+    try:
+        from app.services.ocr import image_roles as _roles
+
+        _labels = [label for _, label in supplied]
+        _roles_by_label = _roles.classify_roles(
+            _labels,
+            {label: per_image_lines[i]
+             if i < len(per_image_lines) else []
+             for i, label in enumerate(_labels)})
+    except Exception:
+        _roles_by_label = {}
+    try:
+        from app.services.ocr.image_roles import DUPLICATE as _DUP
+
+        for _res in image_results:
+            if _res.get("duplicate_of"):
+                _roles_by_label[_res["image"]] = _DUP
+    except Exception:
+        pass
+    timings["role_detection_ms"] = round(
+        (time.perf_counter() - _t_roles) * 1000, 1)
+    timings["stage_timings"]["role_detection_ms"] = \
+        timings["role_detection_ms"]
+    for _label, _role in _roles_by_label.items():
+        try:
+            if isinstance(timings.get("images", {}).get(_label), dict):
+                timings["images"][_label]["role"] = _role
+            if isinstance(diagnostics.get("images", {}).get(_label),
+                          dict):
+                diagnostics["images"][_label]["role"] = _role
+        except Exception:
+            pass
+    timings["image_roles"] = dict(_roles_by_label)
+    _field_counts = {"detected": 0, "needs_review": 0, "not_detected": 0}
+    try:
+        for _hit in (detailed or {}).values():
+            _st = (_hit or {}).get("status")
+            if _st == "DETECTED":
+                _field_counts["detected"] += 1
+            elif _st == "NEEDS_REVIEW":
+                _field_counts["needs_review"] += 1
+            else:
+                _field_counts["not_detected"] += 1
+    except Exception:
+        pass
+    timings["field_counts"] = _field_counts
     # Call-budget contract (spec §2/§9): full-page calls == images,
     # targeted <= MAX_TARGETED per image, tesseract <= 1 per image.
     timings["call_budget"] = {
@@ -1632,21 +2472,57 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
         diag_stage, image_columns, timings, call_log, supplied)
 
     status = "OK" if all_lines else "NEEDS_REVIEW"
+    # Stage 3C §N: per-field provider + preprocessing-variant evidence.
+    # Resolved from the source line's own tags (never assumed): the hit
+    # image label locates the per-image line list, image_index the line.
+    _engine_name = getattr(provider, "name", "ocr")
+    _lines_by_label: dict[str, list] = {}
+    try:
+        for _i, (_raw, _lab) in enumerate(supplied):
+            if _i < len(per_image_lines):
+                _lines_by_label.setdefault(_lab,
+                                            per_image_lines[_i])
+    except Exception:
+        _lines_by_label = {}
+
+    def _variant_for(hit: dict[str, Any]) -> str:
+        try:
+            _lab = hit.get("image")
+            _idx = hit.get("image_index")
+            _lines = _lines_by_label.get(_lab) or []
+            if isinstance(_idx, int) and 0 <= _idx < len(_lines):
+                return str(getattr(_lines[_idx], "variant",
+                                   "stage1") or "stage1")
+        except Exception:
+            pass
+        return "stage1"
+
     out: dict[str, Any] = {
         "status": status,
-        "engine": getattr(provider, "name", "ocr"),
+        "engine": _engine_name,
         "images": image_results,
         "images_analyzed": len(image_results),
         "fields": fields,
         "fields_detailed": {k: {"value": v["value"],
                                 "confidence": v["confidence"],
                                 "provenance": "OCR",
+                                "provider": _engine_name,
+                                "preprocessing_variant": _variant_for(v),
                                 "image": v["image"],
                                 "image_index": v["image_index"],
                                 "box": v.get("box"),
                                 "status": v["status"],
                                 "sources": v.get("sources", []),
-                                "candidates": v.get("candidates", [])}
+                                "candidates": v.get("candidates", []),
+                                # Stage-1D retrieval evidence (additive):
+                                # retained candidate pool, fused honesty
+                                # score, scoring reasons, brand pick.
+                                "all_candidates": v.get(
+                                    "all_candidates", []),
+                                "fused_confidence": v.get(
+                                    "fused_confidence"),
+                                "score_reasons": v.get("score_reasons", []),
+                                "brand": v.get("brand")}
                             for k, v in detailed.items()},
         "food": food,
         "veg_nonveg_symbol": veg,
@@ -1684,7 +2560,8 @@ def _field_candidate_boxes(stage_lines: list[dict[str, Any]]
     out: dict[str, list[dict[str, Any]]] = {
         "mrp": [], "date": [], "fssai": [], "care": [],
         "nutrition": [], "ingredient_heading": []}
-    for ln in stage_lines or []:
+    rows = list(stage_lines or [])
+    for k, ln in enumerate(rows):
         text = str(ln.get("text", "") or "")
         if not text.strip():
             continue
@@ -1702,10 +2579,60 @@ def _field_candidate_boxes(stage_lines: list[dict[str, Any]]
 
             if _food._NUTRI_HEAD.search(text):
                 out["nutrition"].append(entry)
-            if _food._is_ingredient_heading(text):
+            ctx = " ".join(str(r.get("text", "") or "")
+                           for r in rows[max(0, k - 2):k + 3])
+            if _food._is_ingredient_heading(text, ctx):
                 out["ingredient_heading"].append(entry)
         except Exception:
             pass
+    return out
+
+
+def _field_regions_for_label(
+        cand_boxes: dict[str, list[dict[str, Any]]],
+        label: str) -> dict[str, list[dict[str, Any]]]:
+    """Field-keyed evidence regions for one image (Stage 3C §B).
+
+    Derived from the same anchor candidate boxes as the debug view, so
+    no extra OCR is spent. Each record carries region, image_id, bbox,
+    anchor, source_lines and a heuristic confidence. Absent fields mean
+    "no anchor found" (callers fall back to full-image behavior, never
+    a fabricated region).
+    """
+    kind_to_fields: dict[str, list[str]] = {
+        "mrp": ["mrp"],
+        "date": ["manufacturing_date", "best_before", "use_by"],
+        "fssai": ["fssai_license"],
+        "care": ["consumer_care"],
+        "nutrition": ["energy", "protein", "carbohydrate", "total_sugars",
+                      "added_sugars", "total_fat", "saturated_fat",
+                      "trans_fat", "sodium"],
+        "ingredient_heading": ["ingredients"],
+    }
+    kind_to_region: dict[str, str] = {
+        "mrp": "MRP", "date": "DATE", "fssai": "FSSAI",
+        "care": "CONSUMER_CARE", "nutrition": "NUTRITION",
+        "ingredient_heading": "INGREDIENTS",
+    }
+    out: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for kind, entries in (cand_boxes or {}).items():
+            if kind not in kind_to_fields:
+                continue
+            for entry in entries or []:
+                if not isinstance(entry, dict) or not entry.get("box"):
+                    continue
+                for field in kind_to_fields[kind]:
+                    out.setdefault(field, []).append({
+                        "region": kind_to_region[kind],
+                        "image_id": label,
+                        "bbox": entry.get("box"),
+                        "anchor": str(entry.get("text", ""))[:60],
+                        "source_lines": [str(entry.get("text", ""))],
+                        "confidence": 0.8,
+                    })
+    except Exception:
+        pass
     return out
 
 
@@ -1735,15 +2662,18 @@ def _build_package_diagnostics(
         try:
             from app.services.ocr import food as _food
 
-            for ln in stage_lines:
+            for k, ln in enumerate(stage_lines):
+                ctx = " ".join(str(r.get("text", "") or "") for r in
+                               stage_lines[max(0, k - 2):k + 3])
                 if _food._is_ingredient_heading(
-                        str(ln.get("text", "") or "")):
+                        str(ln.get("text", "") or ""), ctx):
                     heading_box = ln.get("box")
                     break
         except Exception:
             pass
         img_calls = [e for e in (call_log or [])
                      if e.get("image_id") == label]
+        cand_boxes = _field_candidate_boxes(stage_lines)
         images[label] = {
             "image_index": info.get("index"),
             "orientation": (info.get("orientation") or {}).get(
@@ -1758,7 +2688,8 @@ def _build_package_diagnostics(
             "proposed_ingredient_crops": [
                 e.get("crop_rect") for e in img_calls
                 if e.get("purpose") == "ingredients"],
-            "candidate_boxes": _field_candidate_boxes(stage_lines),
+            "candidate_boxes": cand_boxes,
+            "field_regions": _field_regions_for_label(cand_boxes, label),
             "provider_calls": img_calls,
             "timings": (timings.get("images", {}) or {}).get(label, {}),
         }

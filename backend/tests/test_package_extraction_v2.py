@@ -293,18 +293,27 @@ def test_multi_image_ingredient_evidence_pooled():
                  ("palm oil, salt", 0.88)],
     })
     out = service.extract_label_multi(
-        [(_png(), "front"), (_png(), "back")], provider=provider)
+        [(_png(0), "front"), (_png(1), "back")],
+        provider=provider)
     raw = out["food"]["fields"]["ingredients"]["raw_text"] or ""
     assert "palm oil" in raw
     assert out["fields_detailed"]["quantity"]["value"] == "70"
 
 
-def _png():
+def _png(slot: int | None = None):
+    # Distinct panels need distinct pixels (Stage 3A.5 dedup); slots are
+    # 2D grid positions. Same slot twice = intentional duplicate.
     import io
 
-    from PIL import Image
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (900, 300), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

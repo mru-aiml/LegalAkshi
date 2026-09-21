@@ -1247,7 +1247,44 @@ function OfficerProfilePage() {
         </div> : <p className="text-xs text-[#849188]">Loading profile…</p>}
         {profile && <p className="mt-5 text-xs text-[#849188]">Verifications recorded: <b>{profile.activity?.verifications_recorded ?? 0}</b>{profile.activity?.last_active ? ` · last active ${profile.activity.last_active}` : ''}</p>}
       </div>
-    </div></>;
+    </div>
+    <VisionAiCard auth={auth} /></>;
+}
+
+function VisionAiCard({ auth }: { auth?: { devRole?: 'consumer' | 'officer' | 'admin'; devUser?: string } }) {
+  // Stage 2C §20: Vision AI diagnostics (status only — configuration
+  // editing is never exposed in the browser; the API key never leaves
+  // the server).
+  const [status, setStatus] = useState<{ status: string; provider: string | null; model: string | null; reason: string } | null>(null);
+  const [health, setHealth] = useState<{ status: string; reason?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.visionStatus(auth).then(setStatus).catch(() => setStatus(null));
+  }, []);
+  const runTest = () => {
+    setTesting(true);
+    setError('');
+    api.visionHealth(auth)
+      .then((h) => setHealth(h))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setTesting(false));
+  };
+  return <div className="mt-5 rounded-2xl border border-[#dfe9e2] bg-white p-6 shadow-soft" data-testid="vision-ai-card">
+    <h2 className="font-bold text-[#20382b]">Vision AI</h2>
+    <p className="mt-1 text-[11px] text-[#849188]">Extraction assistant status — never a compliance decider, never shown credentials.</p>
+    <div className="mt-4 grid gap-4 text-sm sm:grid-cols-3">
+      <div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-[#87958c]">Status</p><p className="mt-1 font-bold text-[#20382b]" data-testid="vision-ai-status">{status ? status.status : 'Loading…'}</p></div>
+      <div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-[#87958c]">Provider</p><p className="mt-1 font-bold text-[#20382b]" data-testid="vision-ai-provider">{status?.provider ?? '—'}</p></div>
+      <div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-[#87958c]">Model</p><p className="mt-1 font-bold text-[#20382b]" data-testid="vision-ai-model">{status?.model ?? '—'}</p></div>
+    </div>
+    {status?.reason && <p className="mt-3 text-xs text-[#68766f]" data-testid="vision-ai-reason">{status.reason}</p>}
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+      <button onClick={runTest} disabled={testing} className="rounded-lg bg-[#18B978] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" data-testid="button-test-vision">{testing ? 'Testing…' : 'Test Vision AI'}</button>
+      {health && <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${health.status === 'AVAILABLE' ? 'bg-[#e3f7ed] text-[#08784e]' : 'bg-[#fff4cf] text-[#946b09]'}`} data-testid="vision-ai-health">{health.status}{health.reason ? ` — ${health.reason}` : ''}</span>}
+    </div>
+    {error && <p className="mt-3 text-xs text-[#8D3834]" data-testid="vision-ai-error">{error}</p>}
+  </div>;
 }
 
 function EmptyState({ icon: Icon, title, text }: { icon: typeof ClipboardCheck; title: string; text: string }) { return <div className="rounded-xl border border-dashed border-[#cbdad0] bg-white px-6 py-14 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-[#eaf8f1] text-[#18B978]"><Icon size={22} /></span><h2 className="mt-4 font-bold text-[#30473a]">{title}</h2><p className="mx-auto mt-2 max-w-sm text-sm text-[#849188]">{text}</p></div>; }

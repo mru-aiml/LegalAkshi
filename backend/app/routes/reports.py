@@ -7,17 +7,22 @@ the official report.
 """
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app.core.config import get_settings
+from app.core import dbmetrics as dbmetrics_mod
 from app.engine import scoring as scoring_mod
 from app.repositories.base import Repo
 from app.services import reports as report_svc
 
 router = APIRouter(tags=["reports"])
+
+log = logging.getLogger("legalakshi.reports")
 
 
 def _repo(request: Request) -> Repo:
@@ -31,15 +36,26 @@ def get_report(report_id: str, request: Request, format: str = "json"):
         uuid.UUID(report_id)
     except ValueError:
         raise HTTPException(status_code=422, detail="invalid report_id")
+    # Phase timing (debug log only; no PII, no OCR text): total request
+    # time lands in the X-Request-Duration-Ms header via middleware.
+    t_build = time.perf_counter()
+    db_before = dbmetrics_mod.count()
     data = report_svc.build_report_data(repo, report_id)  # report_id = inspection_id
+    build_ms = round((time.perf_counter() - t_build) * 1000, 1)
     if data is None:
         if repo.get_inspection(report_id) is None:
             raise HTTPException(status_code=404, detail="report not found")
         raise HTTPException(status_code=404,
                             detail="no analysis persisted for this inspection")
     score = report_svc.finding_score(data["findings"], data["policy"])
+    log.debug("report %s build: %sms (%s db calls, %s findings)",
+              report_id, build_ms, dbmetrics_mod.count() - db_before,
+              len(data["findings"]))
     if format == "pdf":
+        t_pdf = time.perf_counter()
         pdf = report_svc.render_pdf(data, score)
+        log.debug("report %s pdf render: %sms (%s bytes)", report_id,
+                  round((time.perf_counter() - t_pdf) * 1000, 1), len(pdf))
         return Response(
             content=pdf, media_type="application/pdf",
             headers={"Content-Disposition":

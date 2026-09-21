@@ -6,7 +6,7 @@
  * analysis -> findings -> violations -> official report. Every regulatory
  * result comes from the FastAPI backend; OCR never decides compliance.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
 import { ArrowRight, Check, Download, Info, ScanLine, ShieldCheck } from 'lucide-react';
 import { api, type AnalysisResponse, type AuthOptions, type FoodIngredients, type OcrFieldStatus, type OcrResponse } from '@/lib/api';
@@ -129,6 +129,39 @@ export function OfficerScanPage() {
   // Per-field OCR evidence status (DETECTED / NEEDS_REVIEW / NOT_DETECTED)
   // for unedited fields; deleted on edit alongside ocrMeta.
   const [ocrFieldStatus, setOcrFieldStatus] = useState<Record<string, OcrFieldStatus>>({});
+  // Fields the officer changed AFTER OCR filled them: shown distinctly as
+  // OFFICER CORRECTED (not lumped in with untouched MANUAL blanks).
+  const [corrected, setCorrected] = useState<Record<string, boolean>>({});
+  // Frozen OCR evidence snapshot per form field (value/confidence/source
+  // image/box/status at capture time) for the "Review evidence" panels.
+  // Stage 3C: provider + region ride along when reconciliation supplies
+  // them; detailed evidence stays behind the toggle by default.
+  const [ocrEvidence, setOcrEvidence] = useState<Record<string, { value: string; conf: number | null; image?: string | null; box?: unknown; status?: OcrFieldStatus; provider?: string | null; region?: string | null }>>({});
+  // Stage 2 reconciliation sources per registry field: e.g. ["rapidocr",
+  // "vision"], plus conflicting candidates for the needs-review display.
+  const [fieldSources, setFieldSources] = useState<Record<string, string[]>>({});
+  const [fieldCandidates, setFieldCandidates] = useState<Record<string, { source: string; value: string; confidence?: number | null }[]>>({});
+  const [fieldReasons, setFieldReasons] = useState<Record<string, string>>({});
+  // Corrections persisted to the backend (append-only, officer-only).
+  const [savedCorrections, setSavedCorrections] = useState(0);
+  const [productId, setProductId] = useState('');
+  // Stage 2B vision diagnostics for the review header (provider, calls,
+  // latency). Null when the backend ran OCR-only or is older.
+  const [visionInfo, setVisionInfo] = useState<{
+    enabled: boolean; provider?: string | null; calls?: number;
+    latencyMs?: number | null; error?: string | null;
+    detail?: string | null;
+  } | null>(null);
+  // Correction audit (Stage 2 human-in-the-loop): every officer edit of
+  // an OCR-valued field keeps original value, corrected value, source,
+  // timestamp, field and evidence. Persisted append-only to the backend
+  // once the inspection product exists (see runAnalysis); only verified
+  // rows may ever enter the trusted learning dataset — nothing here
+  // trains anything.
+  const [corrections, setCorrections] = useState<{ field: string; from: string; to: string; at: string; image?: string | null; box?: unknown; status?: string; conf?: number | null }[]>([]);
+  // Analysis requirements from the Rule Engine (read-only): which
+  // review fields the applicable checks need for the current context.
+  const [requirements, setRequirements] = useState<{ required: { field: string; ocr_key: string | null; form_key: string | null; checks: { check_id: string; title: string }[] }[]; optional: { field: string; ocr_key: string | null; form_key: string | null }[] } | null>(null);
   const [ocrStatus, setOcrStatus] = useState('');
   const [ocrStep, setOcrStep] = useState(0);
   const [ocrElapsed, setOcrElapsed] = useState(0);
@@ -147,6 +180,42 @@ export function OfficerScanPage() {
     ingredients_raw: 'ingredients_raw',
   };
   const auth: AuthOptions | undefined = api.devHeadersEnabled ? { devRole: 'officer' } : undefined;
+  // Analysis requirements (Rule-Engine-derived, read-only) for the
+  // current inspection context; refetched when context toggles change.
+  useEffect(() => {
+    if (phase !== 'review') return;
+    api.analysisRequirements({
+      food: fields.is_food, imported: fields.imported,
+      ecommerce: fields.ecommerce || inspectionContext !== 'PACKAGE_ONLY',
+      category: fields.category, quantity_type: 'weight',
+    }).then(setRequirements).catch(() => setRequirements(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, fields.is_food, fields.imported, fields.ecommerce, fields.category, inspectionContext]);
+  /** Whether a required review field is usable for analysis: non-blank
+   *  plus DETECTED, officer-corrected, or officer-typed (MANUAL) value.
+   *  Untouched NEEDS_REVIEW / NOT_DETECTED blanks are not usable. */
+  const fieldUsable = (formKey: string): boolean => {
+    const raw = fields[formKey as keyof Fields];
+    if (typeof raw !== 'string' || raw.trim() === '') return false;
+    if (formKey === 'quantity' && String(fields.quantity_unit).trim() === '') return false;
+    const reg = FORM_TO_REGISTRY[formKey] ?? formKey;
+    const st = ocrFieldStatus[reg];
+    if (st === 'DETECTED') return true;
+    if (corrected[reg]) return true;
+    if (st === undefined && ocrMeta[reg] === undefined) return true; // officer-typed
+    return false;
+  };
+  const requiredReqs = (requirements?.required ?? []).filter((r) => r.form_key);
+  const usableCount = requiredReqs.filter((r) => fieldUsable(r.form_key as string)).length;
+  const blockedReqs = requiredReqs.filter((r) => !fieldUsable(r.form_key as string));
+  const autoCount = Object.values(ocrFieldStatus).filter((s) => s === 'DETECTED').length;
+  const reviewCount = Object.values(ocrFieldStatus).filter((s) => s === 'NEEDS_REVIEW').length;
+  const missingCount = Object.keys(FORM_TO_REGISTRY).length - autoCount - reviewCount;
+  // Gate is active only when the requirements endpoint answered with
+  // reviewable fields; otherwise the legacy product-name gate applies
+  // (never block on an unreachable endpoint).
+  const gateActive = requirements !== null && requiredReqs.length > 0;
+  const analysisReady = gateActive ? blockedReqs.length === 0 : !!fields.product_name;
 
   const pick = (side: 'front' | 'back', file: File) => {
     setScanPhoto(side, { name: file.name, url: URL.createObjectURL(file) });
@@ -161,15 +230,33 @@ export function OfficerScanPage() {
   const set = (key: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const v = e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked : e.target.value;
     setFields((f) => ({ ...f, [key]: v as never }));
-    // Any keystroke converts the field to a MANUAL reviewed value.
+    // Any keystroke converts the field to a reviewed value. Fields that
+    // held an OCR value become OFFICER CORRECTED (with a correction
+    // record); untouched blanks stay MANUAL.
+    const regKey = FORM_TO_REGISTRY[key] ?? key;
+    if (ocrMeta[regKey] !== undefined && typeof v !== 'boolean') {
+      const prev = fields[key];
+      if (typeof prev === 'string' && prev !== v) {
+        const ev = ocrEvidence[key as string];
+        const prevStatus = ocrFieldStatus[regKey];
+        const prevConf = ocrMeta[regKey]?.conf ?? null;
+        setCorrected((c) => (c[regKey] ? c : { ...c, [regKey]: true }));
+        setCorrections((list) => [...list, {
+          field: key as string, from: prev, to: v as string,
+          at: new Date().toISOString(),
+          image: ev?.image ?? null, box: ev?.box,
+          status: prevStatus, conf: prevConf,
+        }]);
+      }
+    }
     setOcrMeta((m) => {
       const next = { ...m };
-      delete next[FORM_TO_REGISTRY[key] ?? key];
+      delete next[regKey];
       return next;
     });
     setOcrFieldStatus((m) => {
       const next = { ...m };
-      delete next[FORM_TO_REGISTRY[key] ?? key];
+      delete next[regKey];
       return next;
     });
   };
@@ -219,22 +306,100 @@ export function OfficerScanPage() {
         ingredients_raw: ing?.cleaned_text || ing?.raw_text || '',
       }));
       // Provenance + evidence status for UNEDITED fields only; any
-      // keystroke below deletes both (field becomes MANUAL).
+      // keystroke below deletes both (field becomes MANUAL/CORRECTED).
+      // The frozen evidence snapshot stays for the review panels.
       const meta: Record<string, { conf: number | null }> = {};
       const statuses: Record<string, OcrFieldStatus> = {};
+      const evidence: Record<string, { value: string; conf: number | null; image?: string | null; box?: unknown; status?: OcrFieldStatus; provider?: string | null; region?: string | null }> = {};
+      const sources: Record<string, string[]> = {};
+      const candidates: Record<string, { source: string; value: string }[]> = {};
+      const reasons: Record<string, string> = {};
+      // Stage 2B server reconciliation: the OCR response itself carries
+      // OCR + Vision reconciled FINAL candidates (conflicts stay
+      // NEEDS_REVIEW, never auto-picked). Prefer it; fall back to the
+      // standalone reconcile call only against older backends.
+      let reconciled: Record<string, {
+        status?: OcrFieldStatus; final_value?: string | null;
+        sources?: string[]; candidates?: { source: string; value: string }[];
+        needs_review_reason?: string; region?: string | null;
+      }> = {};
+      const serverRec = (res.reconciliation?.fields ?? {}) as typeof reconciled;
+      if (Object.keys(serverRec).length > 0) {
+        reconciled = serverRec;
+      } else {
+        try {
+          const rec = await api.reconcile({
+            ocr_result: { fields: res.fields },
+            requirements,
+          }, auth);
+          reconciled = (rec.fields ?? {}) as typeof reconciled;
+        } catch {
+          reconciled = {};
+        }
+      }
       (Object.keys(FORM_TO_REGISTRY)).forEach((formKey) => {
         const hit = f[formKey];
+        const regKey = FORM_TO_REGISTRY[formKey];
+        const rec = reconciled[formKey] ?? reconciled[regKey];
         if (hit?.value !== null && hit?.value !== undefined && hit.value !== '') {
           meta[FORM_TO_REGISTRY[formKey]] = { conf: hit.confidence };
         }
         if (hit?.status) {
           statuses[FORM_TO_REGISTRY[formKey]] = hit.status;
         }
+        if (hit !== undefined && hit !== null) {
+          const vCand = (rec?.candidates ?? []).find((c) => c.source === 'vision') as { provider?: string | null } | undefined;
+          const hitRec = hit as { box?: unknown; provider?: string | null; provenance?: string };
+          evidence[formKey] = {
+            value: hit.value ?? '',
+            conf: hit.confidence ?? null,
+            image: hit.image ?? null,
+            box: hitRec.box,
+            status: hit.status,
+            provider: vCand?.provider ?? hitRec.provider ?? hitRec.provenance ?? res.engine ?? null,
+            region: rec?.region ?? null,
+          };
+        }
+        const srcList = rec?.sources ?? (hit as { sources?: { image?: string | null }[] } | undefined)?.sources?.map((s) => 'OCR').filter((v, i, a) => a.indexOf(v) === i);
+        if (srcList && srcList.length > 0) sources[regKey] = srcList.map((s) => s === 'vision' ? 'Vision AI' : s === 'rapidocr' || s === 'OCR' ? 'OCR' : s);
+        else if (hit?.provenance) sources[regKey] = [hit.provenance === 'vision' ? 'Vision AI' : 'OCR'];
+        const recCands = (rec?.candidates ?? []).map((c) => ({ source: c.source === 'vision' ? 'Vision' : c.source === 'rapidocr' ? 'OCR' : c.source, value: c.value, confidence: (c as { confidence?: number | null }).confidence ?? null }));
+        if (recCands.length > 0) candidates[regKey] = recCands;
+        if (rec?.needs_review_reason) reasons[regKey] = rec.needs_review_reason;
+        if (rec?.status && (rec.final_value !== undefined || rec.status !== 'DETECTED')) {
+          // Server reconciliation is authoritative on status; keep the
+          // OCR-filled form value but surface the reconciled status.
+          if (rec.status === 'NEEDS_REVIEW' || rec.status === 'NOT_DETECTED') {
+            statuses[regKey] = rec.status;
+          }
+        }
       });
+      setFieldSources(sources);
+      setFieldCandidates(candidates);
+      setFieldReasons(reasons);
       setOcrMeta(meta);
       setOcrFieldStatus(statuses);
+      setOcrEvidence(evidence);
+      setSavedCorrections(0);
+      setProductId('');
+      setCorrected({});
+      setCorrections([]);
       setOcr(res);
       setOcrBackendMs(res.timings?.total_ms ?? null);
+      // Stage 2B: surface vision-stage diagnostics when the backend ran
+      // it (provider + bounded call count + latency); OCR-only otherwise.
+      if (res.vision) {
+        setVisionInfo({
+          enabled: !!res.vision.vision_enabled,
+          provider: res.vision.vision_provider ?? null,
+          calls: res.vision.vision_calls ?? 0,
+          latencyMs: res.vision.vision_latency_ms ?? null,
+          error: res.vision.vision_error ?? null,
+          detail: res.vision.vision_status_detail ?? null,
+        });
+      } else {
+        setVisionInfo(null);
+      }
       const n = res.images_analyzed ?? ((files.front ? 1 : 0) + (files.back ? 1 : 0));
       setOcrStatus(res.status === 'OK'
         ? `OCR extraction (${res.engine}) over ${n} package image${n === 1 ? '' : 's'} — review every value before analysis. OCR is not guaranteed correct.`
@@ -314,6 +479,30 @@ export function OfficerScanPage() {
       });
       const analysis = await api.analyze(inspection.inspection_id, { product_id: product.product_id });
       setInspectionId(inspection.inspection_id);
+      setProductId(product.product_id);
+      // Stage 2: persist officer corrections append-only (officer-only
+      // endpoint). Originals are preserved server-side; failures never
+      // block the already-computed analysis.
+      if (corrections.length > 0) {
+        let saved = 0;
+        for (const c of corrections) {
+          try {
+            await api.createCorrection(inspection.inspection_id, product.product_id, {
+              field_key: FORM_TO_REGISTRY[c.field] ?? c.field,
+              original_value: c.from,
+              corrected_value: c.to,
+              original_status: c.status ?? 'NEEDS_REVIEW',
+              original_confidence: c.conf ?? null,
+              evidence_snapshot: { image_id: c.image ?? null, box: c.box ?? null },
+              correction_reason: 'officer review during Scan & Inspect',
+            }, auth);
+            saved += 1;
+          } catch {
+            /* correction persistence is best-effort post-analysis */
+          }
+        }
+        setSavedCorrections(saved);
+      }
       setResult(analysis);
       setPhase('result');
     } catch (err) {
@@ -345,32 +534,95 @@ export function OfficerScanPage() {
 
   const provBadge = (formKey: string) => {
     const regKey = FORM_TO_REGISTRY[formKey] ?? formKey;
+    const srcs = fieldSources[regKey];
+    const hasVision = (srcs ?? []).some((s) => s === 'Vision AI' || s === 'vision');
+    const hasOcr = (srcs ?? []).some((s) => s === 'OCR' || s === 'rapidocr');
     const hit = ocrMeta[regKey];
     if (hit) {
-      return <span className="rounded-full bg-[#e3f7ed] px-2 py-0.5 font-mono text-[10px] text-[#08784e]" data-testid={`prov-${formKey}`}>✓ OCR detected · {hit.conf === null || hit.conf === undefined ? 'n/a' : `${Math.round(hit.conf * 100)}%`}</span>;
+      // Stage 2B §13: agreement display. "Auto-detected" is kept for
+      // continuity; the source suffix names the evidence.
+      const agreement = hasVision && hasOcr
+        ? 'OCR + AI agreement'
+        : hasVision
+          ? 'Vision-supported'
+          : 'OCR';
+      return <span className="rounded-full bg-[#e3f7ed] px-2 py-0.5 font-mono text-[10px] text-[#08784e]" data-testid={`prov-${formKey}`}>✓ Auto-detected · {agreement} · {hit.conf === null || hit.conf === undefined ? 'n/a' : `${Math.round(hit.conf * 100)}%`}</span>;
+    }
+    if (corrected[regKey]) {
+      return <span className="rounded-full bg-[#e5f1f4] px-2 py-0.5 font-mono text-[10px] text-[#507b8c]" data-testid={`prov-${formKey}`}>✎ Officer corrected · Correction saved{savedCorrections > 0 ? ' ✓' : ''}</span>;
     }
     // Unedited but empty: show the OCR evidence status instead of MANUAL.
+    // Stage 2B §13: conflicting OCR/Vision candidates display both sides.
     const st = ocrFieldStatus[regKey];
     if (st === 'NEEDS_REVIEW') {
-      return <span className="rounded-full bg-[#fff4cf] px-2 py-0.5 font-mono text-[10px] text-[#946b09]" data-testid={`prov-${formKey}`}>⚠ Needs review</span>;
+      const cands = fieldCandidates[regKey] ?? [];
+      const reason = fieldReasons[regKey];
+      if (cands.length > 1) {
+        const sides = cands.map((c) => `${c.source}: ${c.value}`).join(' vs ');
+        return <span className="rounded-full bg-[#fff4cf] px-2 py-0.5 font-mono text-[10px] text-[#946b09]" data-testid={`prov-${formKey}`} title={reason ? `Reason: ${reason}` : undefined}>⚠ OCR/AI conflict: {sides}{reason ? ` · Reason: ${reason}` : ''}</span>;
+      }
+      return <span className="rounded-full bg-[#fff4cf] px-2 py-0.5 font-mono text-[10px] text-[#946b09]" data-testid={`prov-${formKey}`} title={reason ? `Reason: ${reason}` : undefined}>⚠ Needs review{reason ? ` · Reason: ${reason}` : ''}</span>;
     }
     if (st === 'NOT_DETECTED') {
-      return <span className="rounded-full bg-[#edf1ef] px-2 py-0.5 font-mono text-[10px] text-[#53625b]" data-testid={`prov-${formKey}`}>○ Not detected</span>;
+      return <span className="rounded-full bg-[#edf1ef] px-2 py-0.5 font-mono text-[10px] text-[#53625b]" data-testid={`prov-${formKey}`}>○ Not detected · No reliable evidence found</span>;
     }
     return <span className="rounded-full bg-[#edf1ef] px-2 py-0.5 font-mono text-[10px] text-[#53625b]" data-testid={`prov-${formKey}`}>MANUAL</span>;
+  };
+
+  const correctionNote = (formKey: string) => {
+    const regKey = FORM_TO_REGISTRY[formKey] ?? formKey;
+    const entry = [...corrections].reverse().find((c) => (FORM_TO_REGISTRY[c.field] ?? c.field) === regKey);
+    if (!entry) return null;
+    return <p className="mt-1 font-mono text-[10px] leading-relaxed text-[#507b8c]" data-testid={`correction-note-${formKey}`}>
+      Original: {entry.from === '' ? '(blank)' : entry.from} → Corrected: {entry.to === '' ? '(blank)' : entry.to} · Correction saved{savedCorrections > 0 ? ' to inspection record' : ' locally — persists on analysis'}.
+    </p>;
   };
 
   const textField = (label: string, key: keyof Fields) => (
     <label key={key} className="block">
       <span className="mb-1.5 flex items-center justify-between text-xs font-bold text-[#3d5145]">{label}{provBadge(key as string)}</span>
       <input value={String(fields[key])} onChange={set(key)} className="focus-ring w-full rounded-lg border border-[#dbe6de] px-3.5 py-3 text-sm outline-none focus:border-[#18B978]" data-testid={`input-officer-${key}`} />
+      {correctionNote(key as string)}
     </label>
   );
 
-  const groupBox = (title: string, children: React.ReactNode) => (
+  const FIELD_LABELS: Record<string, string> = {
+    product_name: 'Product name', category: 'Category', manufacturer: 'Manufacturer',
+    quantity: 'Quantity', quantity_unit: 'Unit', manufacturing_date: 'Manufacturing date',
+    mrp: 'MRP', consumer_care: 'Consumer care', fssai_license: 'FSSAI licence',
+    batch_lot: 'Batch / lot', best_before: 'Best before', country_of_origin: 'Country of origin',
+    ingredients_raw: 'Ingredients',
+  };
+  const fmtBox = (box: unknown): string => {
+    try {
+      const pts = box as number[][];
+      const xs = pts.map((p) => Number(p[0]));
+      const ys = pts.map((p) => Number(p[1]));
+      return `x${Math.round(Math.min(...xs))},y${Math.round(Math.min(...ys))} ${Math.round(Math.max(...xs) - Math.min(...xs))}×${Math.round(Math.max(...ys) - Math.min(...ys))}`;
+    } catch {
+      return '—';
+    }
+  };
+  const EvidencePanel = ({ formKeys, testId }: { formKeys: string[]; testId: string }) => {
+    const [open, setOpen] = useState(false);
+    const rows = formKeys.filter((k) => ocrEvidence[k] !== undefined);
+    if (rows.length === 0) return null;
+    return <div className="mt-3" data-testid={testId}>
+      <button onClick={() => setOpen((o) => !o)} className="text-xs font-bold text-[#12885c] hover:underline" data-testid={`${testId}-toggle`}>{open ? 'Hide evidence' : 'Review evidence'}</button>
+      {open && <div className="mt-2 space-y-1.5">{rows.map((k) => {
+        const ev = ocrEvidence[k];
+        return <div key={k} className="rounded-lg bg-[#fbfcfb] p-2.5 font-mono text-[10px] leading-relaxed text-[#586a5f]" data-testid={`${testId}-row-${k}`}>
+          <b className="text-[#30473a]">{FIELD_LABELS[k] ?? k}</b> · OCR value: <b>{ev.value === '' ? '(blank)' : ev.value}</b><br />
+          confidence: {ev.conf === null || ev.conf === undefined ? 'n/a' : `${Math.round(ev.conf * 100)}%`} · status: {ev.status ?? '—'} · source: {ev.image ?? '—'} · box: {fmtBox(ev.box)}{ev.provider ? <> · provider: {ev.provider}</> : null}{ev.region ? <> · region: {ev.region}</> : null}
+        </div>;
+      })}</div>}
+    </div>;
+  };
+  const groupBox = (title: string, children: React.ReactNode, evKeys?: string[]) => (
     <div className="rounded-xl border border-[#e4ece6] p-4">
       <h3 className="mb-3 text-xs font-extrabold uppercase tracking-[.12em] text-[#12885c]">{title}</h3>
       <div className="grid gap-4 sm:grid-cols-2">{children}</div>
+      {evKeys && <EvidencePanel formKeys={evKeys} testId={`evidence-${title.toLowerCase().replaceAll(/[^a-z]+/g, '-')}`} />}
     </div>
   );
 
@@ -409,7 +661,7 @@ export function OfficerScanPage() {
         <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#3d5145]">Inspector ID</span><input value={inspectorId} onChange={(e) => setInspectorId(e.target.value)} placeholder="e.g. INSP-0231" className="focus-ring w-full rounded-lg border border-[#dbe6de] px-3.5 py-3 text-sm outline-none focus:border-[#18B978]" data-testid="input-officer-id" /></label>
       </div>
       <div className="mt-5 flex flex-col-reverse items-stretch justify-between gap-3 border-t border-[#e4ece6] pt-5 sm:flex-row sm:items-center">
-        <button onClick={() => { setOcrMeta({}); setOcrFieldStatus({}); setOcr(null); setOcrBackendMs(null); setIngDetail(null); setOcrStatus('Manual entry — no OCR run. Values will be recorded as MANUAL declarations.'); setPhase('review'); }} className="rounded-lg border border-[#dce5df] px-4 py-2.5 text-sm font-semibold text-[#426050]" data-testid="button-officer-manual">Enter manually</button>
+        <button onClick={() => { setOcrMeta({}); setOcrFieldStatus({}); setCorrected({}); setCorrections([]); setOcrEvidence({}); setFieldSources({}); setFieldCandidates({}); setFieldReasons({}); setVisionInfo(null); setSavedCorrections(0); setProductId(''); setOcr(null); setOcrBackendMs(null); setIngDetail(null); setOcrStatus('Manual entry — no OCR run. Values will be recorded as MANUAL declarations.'); setPhase('review'); }} className="rounded-lg border border-[#dce5df] px-4 py-2.5 text-sm font-semibold text-[#426050]" data-testid="button-officer-manual">Enter manually</button>
         <button onClick={runOcr} disabled={working || (!files.front && !files.back && extraFiles.length === 0)} className="inline-flex items-center gap-2 rounded-lg bg-[#18B978] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_5px_12px_rgba(24,185,120,.18)] hover:bg-[#119e67] disabled:opacity-50" data-testid="button-officer-run-ocr"><ScanLine size={16} />{working ? 'Running OCR…' : 'Run OCR extraction'}</button>
       </div>
       {working && <div className="mt-4 rounded-xl border border-[#cfeedd] bg-[#eaf8f1] p-4" data-testid="ocr-progress">
@@ -423,12 +675,68 @@ export function OfficerScanPage() {
     {phase === 'review' && <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-start gap-3 rounded-xl border border-[#cfeedd] bg-[#eaf8f1] p-4 text-xs leading-relaxed text-[#4c7761]" data-testid="banner-ocr-extraction"><Info size={17} className="mt-0.5 shrink-0 text-[#18B978]" /><span><b>OCR extraction — review before analysis.</b> {ocrStatus || 'Values below came from the OCR service or manual entry.'} OCR is not guaranteed correct; every edit converts that field to a MANUAL reviewed value.</span></div>
       {imagesAnalyzed > 0 && <p className="text-xs font-bold text-[#607069]" data-testid="text-images-analyzed">{imagesAnalyzed} package image{imagesAnalyzed === 1 ? '' : 's'} analyzed{(ocr?.images ?? []).length > 0 ? ` (${(ocr?.images ?? []).map((i) => i.image).join(', ')})` : ''}{ocrBackendMs !== null ? ` in ${(ocrBackendMs / 1000).toFixed(1)}s (${ocr?.timings?.provider_calls ?? '?'} OCR passes)` : ''}.</p>}
+      {visionInfo && <p className="text-[11px] text-[#607069]" data-testid="text-vision-status">{visionInfo.enabled && visionInfo.detail !== 'partial'
+        ? `Vision AI active — OCR and visual evidence are being reconciled (${visionInfo.provider ?? 'provider'} · ${visionInfo.calls ?? 0} grouped call${visionInfo.calls === 1 ? '' : 's'}${visionInfo.latencyMs !== null && visionInfo.latencyMs !== undefined ? ` · ${(visionInfo.latencyMs / 1000).toFixed(1)}s` : ''}).`
+        : visionInfo.enabled
+          ? 'Vision AI partially unavailable — affected fields require review.'
+          : `Vision AI unavailable — OCR-only extraction is being used.${visionInfo.error ? ` (${visionInfo.error})` : ''}`}</p>}
+      <div className="rounded-2xl border border-[#dfe9e2] bg-white p-6 shadow-soft" data-testid="readiness-panel">
+        <h2 className="font-bold text-[#20382b]">Inspection readiness</h2>
+        <p className="mt-1 text-[11px] text-[#849188]">Review once — verify only the highlighted fields before analysis. Required fields come from the applicable Rule Engine checks, not from OCR guesses.</p>
+        <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-bold">
+          <span className="rounded-full bg-[#e3f7ed] px-2.5 py-1 text-[#08784e]" data-testid="readiness-auto">✓ Auto-detected: {autoCount}</span>
+          <span className="rounded-full bg-[#fff4cf] px-2.5 py-1 text-[#946b09]" data-testid="readiness-review">⚠ Needs review: {reviewCount}</span>
+          <span className="rounded-full bg-[#edf1ef] px-2.5 py-1 text-[#53625b]" data-testid="readiness-missing">○ Not detected: {missingCount}</span>
+        </div>
+        <div className="mt-4 border-t border-[#edf1ee] pt-4">
+          {requirements === null
+            ? <p className="text-xs text-[#849188]" data-testid="readiness-unavailable">Rule requirements temporarily unavailable. Analysis readiness cannot be fully determined — you may still review the fields below.</p>
+            : requiredReqs.length === 0
+              ? <p className="text-xs text-[#849188]" data-testid="readiness-none">No reviewable required fields for this context.</p>
+              : <><p className="text-xs font-bold text-[#30473a]" data-testid="readiness-required">Required for analysis: ✓ {usableCount} / {requiredReqs.length}</p>
+                {blockedReqs.length > 0
+                  ? <div className="mt-2 rounded-lg bg-[#fff4cf] p-3 text-xs leading-relaxed text-[#946b09]" data-testid="readiness-blocked">
+                    <b>{blockedReqs.length} field{blockedReqs.length === 1 ? '' : 's'} required by the applicable checks need{blockedReqs.length === 1 ? 's' : ''} review:</b>
+                    <ul className="mt-1 list-disc pl-5">{blockedReqs.map((r) => <li key={r.field}>{FIELD_LABELS[r.form_key as string] ?? r.field}</li>)}</ul>
+                  </div>
+                  : <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#e3f7ed] px-2.5 py-1 text-[11px] font-bold text-[#08784e]" data-testid="readiness-ready"><Check size={12} />Ready for analysis</p>}
+              </>}
+        </div>
+      </div>
+      {Object.entries(fieldCandidates).filter(([, cands]) => cands.length > 1).length > 0 && <div className="rounded-xl border border-[#f0e3c2] bg-[#fffdf4] p-4" data-testid="conflict-panel">
+        <h3 className="mb-1 text-xs font-extrabold uppercase tracking-[.12em] text-[#946b09]">OCR / AI conflicts ({Object.entries(fieldCandidates).filter(([, cands]) => cands.length > 1).length})</h3>
+        <p className="mb-3 text-[11px] leading-relaxed text-[#849188]">Both candidates are preserved — nothing was auto-picked. Confirm the correct value in the field below.</p>
+        <div className="space-y-2">{Object.entries(fieldCandidates).filter(([, cands]) => cands.length > 1).map(([regKey, cands]) => {
+          const formKey = Object.keys(FORM_TO_REGISTRY).find((k) => FORM_TO_REGISTRY[k] === regKey) ?? regKey;
+          const ev = ocrEvidence[formKey];
+          return <div key={regKey} className="rounded-lg bg-white p-3 text-xs leading-relaxed text-[#3d5145]" data-testid={`conflict-${formKey}`}>
+            <b>{FIELD_LABELS[formKey] ?? regKey}</b>
+            {cands.map((c, i) => <span key={i} className="mt-1 block font-mono text-[11px]">{c.source}: <b>{c.value === '' ? '(blank)' : c.value}</b>{c.confidence !== null && c.confidence !== undefined ? ` · ${Math.round(c.confidence * 100)}%` : ''}</span>)}
+            {fieldReasons[regKey] && <span className="mt-1 block text-[11px] text-[#946b09]">Reason: {fieldReasons[regKey]}</span>}
+            {ev && Boolean(ev.image || ev.box) && <span className="mt-1 block font-mono text-[10px] text-[#849188]">View evidence: source {ev.image ?? '—'}{ev.conf !== null && ev.conf !== undefined ? ` · ${Math.round(ev.conf * 100)}%` : ''} · status {ev.status ?? '—'} — full evidence under “Verify extracted fields”.</span>}
+          </div>;
+        })}</div>
+      </div>}
+      {ocr?.timings?.images && Object.keys(ocr.timings.images).length > 0 && <div className="rounded-xl border border-[#e4ece6] bg-white p-4" data-testid="image-quality-panel">
+        <h3 className="mb-2 text-xs font-extrabold uppercase tracking-[.12em] text-[#12885c]">Image quality</h3>
+        <p className="mb-3 text-[11px] leading-relaxed text-[#849188]">Pre-OCR diagnostics per photo — explains why extraction may be uncertain. Poor quality never blocks review.</p>
+        <div className="space-y-2">{Object.entries(ocr.timings.images).map(([label, t]) => {
+          const q = t.image_quality ?? {};
+          const grade = (k: string) => String(q[k] ?? '—');
+          const tone = (g: string) => g === 'GOOD' ? 'bg-[#e3f7ed] text-[#08784e]' : g === 'FAIR' ? 'bg-[#fff4cf] text-[#946b09]' : g === 'POOR' ? 'bg-[#fce6e4] text-[#b43b37]' : 'bg-[#edf1ef] text-[#53625b]';
+          return <div key={label} className="flex flex-wrap items-center gap-2 text-[11px]" data-testid={`image-quality-${label}`}>
+            <b className="text-[#30473a]">{label}</b>
+            {[['sharpness', grade('sharpness')], ['brightness', grade('brightness')], ['contrast', grade('contrast')], ['resolution', grade('resolution')], ['readability', grade('readability')]].map(([k, g]) => <span key={k} className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${tone(g)}`}>{k}: {g}</span>)}
+            {t.orientation && t.orientation !== '0' && <span className="font-mono text-[10px] text-[#849188]">orientation: {t.orientation}</span>}
+          </div>;
+        })}</div>
+      </div>}
       <div className="rounded-2xl border border-[#dfe9e2] bg-white p-6 shadow-soft">
         <h2 className="font-bold text-[#20382b]">Verify extracted fields</h2>
         <div className="mt-5 space-y-4">
-          {groupBox('Product', <>{textField('Product name', 'product_name')}{textField('Category', 'category')}</>)}
-          {groupBox('Label declarations', <>{textField('Manufacturer', 'manufacturer')}{textField('Quantity', 'quantity')}{textField('Unit', 'quantity_unit')}{textField('Manufacturing date', 'manufacturing_date')}{textField('MRP (blank = missing)', 'mrp')}{textField('Consumer care', 'consumer_care')}</>)}
-          {groupBox('Food information', <>{textField('FSSAI licence', 'fssai_license')}{textField('Batch / lot', 'batch_lot')}{textField('Best before', 'best_before')}{textField('Country of origin', 'country_of_origin')}</>)}
+          {groupBox('Product', <>{textField('Product name', 'product_name')}{textField('Category', 'category')}</>, ['product_name'])}
+          {groupBox('Label declarations', <>{textField('Manufacturer', 'manufacturer')}{textField('Quantity', 'quantity')}{textField('Unit', 'quantity_unit')}{textField('Manufacturing date', 'manufacturing_date')}{textField('MRP (blank = missing)', 'mrp')}{textField('Consumer care', 'consumer_care')}</>, ['manufacturer', 'quantity', 'manufacturing_date', 'mrp', 'consumer_care'])}
+          {groupBox('Food information', <>{textField('FSSAI licence', 'fssai_license')}{textField('Batch / lot', 'batch_lot')}{textField('Best before', 'best_before')}{textField('Country of origin', 'country_of_origin')}</>, ['fssai_license', 'batch_lot', 'best_before', 'country_of_origin'])}
           <div className="rounded-xl border border-[#e4ece6] p-4" data-testid="ingredients-panel">
             <h3 className="mb-3 text-xs font-extrabold uppercase tracking-[.12em] text-[#12885c]">Ingredients</h3>
             {ingDetail && <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]" data-testid="ingredients-meta">
@@ -486,9 +794,14 @@ export function OfficerScanPage() {
           </div>
         </div>
         {error && <p className="mt-4 rounded-lg bg-[#fce6e4] p-3 text-xs text-[#8D3834]" data-testid="text-officer-error">{error}</p>}
+        {corrections.length > 0 && <div className="rounded-xl border border-[#e4ece6] p-4" data-testid="corrections-panel">
+          <h3 className="mb-2 text-xs font-extrabold uppercase tracking-[.12em] text-[#12885c]">Correction history ({corrections.length})</h3>
+          <p className="mb-2 text-[11px] text-[#849188]">Original OCR values kept for future learning — nothing here trains anything{savedCorrections > 0 ? `; ${savedCorrections} saved to the inspection record${productId ? ` (product ${productId.slice(0, 8)}…)` : ''} (verified rows only may enter the trusted dataset).` : ' (persisted to the inspection record on analysis).'}</p>
+          <div className="space-y-1.5">{corrections.map((c, i) => <p key={i} className="font-mono text-[10px] leading-relaxed text-[#586a5f]" data-testid={`correction-${c.field}`}><b className="text-[#30473a]">{FIELD_LABELS[c.field] ?? c.field}</b>: “{c.from}” → “{c.to}” · {c.at.slice(0, 16).replace('T', ' ')}{c.image ? ` · ${c.image}` : ''}</p>)}</div>
+        </div>}
         <div className="mt-5 flex justify-between border-t border-[#edf1ee] pt-5">
           <button onClick={() => setPhase('capture')} className="rounded-lg border border-[#dce5df] px-4 py-2.5 text-sm font-semibold text-[#426050]" data-testid="button-officer-back">Back</button>
-          <button onClick={runAnalysis} disabled={working || !fields.product_name} className="inline-flex items-center gap-2 rounded-lg bg-[#18B978] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" data-testid="button-officer-analyze"><ShieldCheck size={16} />{working ? 'Analyzing…' : 'Run rule-engine analysis'}</button>
+          <button onClick={runAnalysis} disabled={working || !fields.product_name || !analysisReady} title={!analysisReady ? 'Required fields need review first (see Inspection readiness above)' : undefined} className="inline-flex items-center gap-2 rounded-lg bg-[#18B978] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" data-testid="button-officer-analyze"><ShieldCheck size={16} />{working ? 'Analyzing…' : 'Run rule-engine analysis'}</button>
         </div>
       </div>
     </div>}
@@ -553,7 +866,7 @@ export function OfficerScanPage() {
             </div>))}</div>}
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-2 rounded-lg border border-[#dce5df] px-4 py-2.5 text-sm font-semibold text-[#426050] disabled:opacity-50" data-testid="button-officer-report-pdf"><Download size={16} />{downloading ? 'Generating…' : 'Generate official report (PDF)'}</button>
-          <button onClick={() => { clearScanPhotos(); setPhase('capture'); setResult(null); }} className="rounded-lg px-4 py-2.5 text-sm font-semibold text-[#607069] hover:bg-[#eef5f0]" data-testid="button-officer-new-scan"><ScanLine size={16} className="mr-1 inline" />New scan</button>
+          <button onClick={() => { clearScanPhotos(); setPhase('capture'); setResult(null); setProductId(''); setSavedCorrections(0); }} className="rounded-lg px-4 py-2.5 text-sm font-semibold text-[#607069] hover:bg-[#eef5f0]" data-testid="button-officer-new-scan"><ScanLine size={16} className="mr-1 inline" />New scan</button>
         </div>
         {error && <p className="mt-3 rounded-lg bg-[#fce6e4] p-3 text-xs text-[#8D3834]">{error}</p>}
       </div>

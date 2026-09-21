@@ -100,6 +100,9 @@ class PostgresRepo:
             return False
 
     def fetch_all(self, query: str, params: list | None = None) -> list[dict]:
+        from app.core import dbmetrics as _dbmetrics
+
+        _dbmetrics.increment()
         pool = self._pool_or_none()
         if pool is not None:
             with pool.connection() as conn, conn.cursor() as cur:
@@ -114,6 +117,9 @@ class PostgresRepo:
         return rows[0] if rows else None
 
     def execute(self, query: str, params: list | None = None) -> None:
+        from app.core import dbmetrics as _dbmetrics
+
+        _dbmetrics.increment()
         pool = self._pool_or_none()
         if pool is not None:
             with pool.connection() as conn, conn.cursor() as cur:
@@ -334,28 +340,35 @@ class PostgresRepo:
                  "reviewed-declaration" if mixed else "manual-entry"],
             )
             assert ev is not None
+            # One multi-row INSERT instead of one round trip per field:
+            # product creation on a cold database was paying a full
+            # handshake per declaration row. Row content is identical.
+            decl_rows: list[tuple] = []
             for field, value in list(extras.items()) + mirrors:
                 m = meta.get(field) or {}
-                self.execute(
-                    """INSERT INTO extracted_declarations
-                       (evidence_id, field_name, extracted_value, confidence,
-                        ocr_engine)
-                       VALUES (%s::uuid, %s, %s, %s, %s)""",
-                    [ev["evidence_id"], field,
-                     None if value is None else str(value),
-                     meta_confidence(m.get("confidence")),
-                     str(m.get("ocr_engine") or "manual-entry")],
-                )
+                decl_rows.append((
+                    ev["evidence_id"], field,
+                    None if value is None else str(value),
+                    meta_confidence(m.get("confidence")),
+                    str(m.get("ocr_engine") or "manual-entry")))
             for field in uncertain:
                 m = meta.get(field) or {}
+                decl_rows.append((
+                    ev["evidence_id"], field, None,
+                    meta_confidence(m.get("confidence")),
+                    str(m.get("ocr_engine") or "manual-entry")))
+            if decl_rows:
+                placeholders = ",".join(
+                    ["(%s::uuid, %s, %s, %s, %s)"] * len(decl_rows))
+                params: list[Any] = []
+                for row in decl_rows:
+                    params.extend(row)
                 self.execute(
                     """INSERT INTO extracted_declarations
                        (evidence_id, field_name, extracted_value, confidence,
                         ocr_engine)
-                       VALUES (%s::uuid, %s, %s, %s, %s)""",
-                    [ev["evidence_id"], field, None,
-                     meta_confidence(m.get("confidence")),
-                     str(m.get("ocr_engine") or "manual-entry")],
+                       VALUES """ + placeholders,
+                    params,
                 )
         product = self.get_product(pid) or {}
         product["product_id"] = pid
@@ -1096,3 +1109,96 @@ class PostgresRepo:
             [audiences],
         )
         return len(rows)
+
+    # --------------------------------------- declaration corrections ---
+    # Migration 005 (declaration_corrections). Missing table -> actionable
+    # error naming the migration (same pattern as suggestions fallback).
+    def create_correction(self, data: dict[str, Any]) -> dict[str, Any]:
+        import json as _json
+
+        if not str(data.get("field_key", "") or "").strip():
+            raise ValueError("field_key is required")
+        try:
+            row = self.fetch_one(
+                """INSERT INTO declaration_corrections
+                   (inspection_id, product_id, field_key, original_value,
+                    corrected_value, original_status, original_confidence,
+                    source, evidence_snapshot, officer_user_id,
+                    correction_reason)
+                   VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s,
+                           %s::jsonb, %s, %s)
+                   RETURNING id::text AS id, inspection_id::text,
+                    product_id::text, field_key, original_value,
+                    corrected_value, original_status, original_confidence,
+                    source, evidence_snapshot, officer_user_id, created_at,
+                    verified, verified_by, verified_at, correction_reason""",
+                [data.get("inspection_id"), data.get("product_id"),
+                 str(data.get("field_key", "")).strip(),
+                 data.get("original_value"), data.get("corrected_value"),
+                 data.get("original_status", "NEEDS_REVIEW"),
+                 data.get("original_confidence"),
+                 data.get("source", "officer-review"),
+                 _json.dumps(data.get("evidence_snapshot") or {}),
+                 data.get("officer_user_id", ""),
+                 data.get("correction_reason", "")],
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "declaration_corrections is not readable. Apply "
+                "backend/migrations/005_declaration_corrections.sql via "
+                f"backend/scripts/apply_migrations.py ({exc})")
+        assert row is not None
+        return dict(row)
+
+    def list_corrections(self, inspection_id: str,
+                         product_id: str) -> list[dict[str, Any]]:
+        try:
+            return self.fetch_all(
+                """SELECT id::text AS id, inspection_id::text,
+                          product_id::text, field_key, original_value,
+                          corrected_value, original_status,
+                          original_confidence, source, evidence_snapshot,
+                          officer_user_id, created_at, verified, verified_by,
+                          verified_at, correction_reason
+                   FROM declaration_corrections
+                   WHERE inspection_id = %s::uuid AND product_id = %s::uuid
+                   ORDER BY created_at""",
+                [inspection_id, product_id],
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "declaration_corrections is not readable. Apply "
+                "backend/migrations/005_declaration_corrections.sql via "
+                f"backend/scripts/apply_migrations.py ({exc})")
+
+    def all_corrections(self) -> list[dict[str, Any]]:
+        try:
+            return self.fetch_all(
+                """SELECT id::text AS id, inspection_id::text,
+                          product_id::text, field_key, original_value,
+                          corrected_value, original_status,
+                          original_confidence, source, evidence_snapshot,
+                          officer_user_id, created_at, verified, verified_by,
+                          verified_at, correction_reason
+                   FROM declaration_corrections
+                   ORDER BY created_at""")
+        except Exception as exc:
+            raise RuntimeError(
+                "declaration_corrections is not readable. Apply "
+                "backend/migrations/005_declaration_corrections.sql via "
+                f"backend/scripts/apply_migrations.py ({exc})")
+
+    def verify_correction(self, correction_id: str, verified: bool,
+                          verifier_id: str = "") -> dict[str, Any] | None:
+        row = self.fetch_one(
+            """UPDATE declaration_corrections
+               SET verified = %s, verified_by = %s,
+                   verified_at = CASE WHEN %s THEN now() ELSE NULL END
+               WHERE id = %s::uuid
+               RETURNING id::text AS id, verified, verified_by,
+                         verified_at""",
+            [bool(verified), verifier_id or "", bool(verified),
+             correction_id],
+        )
+        return dict(row) if row else None
+

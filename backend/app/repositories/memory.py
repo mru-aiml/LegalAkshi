@@ -59,6 +59,8 @@ class MemoryRepo:
         self.suggestion_events: dict[str, dict] = {}
         self.notifications: dict[str, dict] = {}
         self.enforcement: dict[str, dict] = {}
+        # Stage 2 declaration corrections (migration 005): append-only.
+        self.corrections: dict[str, dict] = {}
         # sync-created (never mutates master seed = legal history preserved)
         self._custom_checks: dict[str, dict] = {}
         self._custom_versions: list[dict] = []
@@ -354,6 +356,57 @@ class MemoryRepo:
     def audit_list(self, entity: str, entity_id: str) -> list[dict[str, Any]]:
         return [copy.deepcopy(a) for a in self.audit_log
                 if a.get("entity_type") == entity and a.get("entity_id") == entity_id]
+
+    # --------------------------------------- declaration corrections ---
+    def create_correction(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Append-only correction row; original evidence never overwritten."""
+        if not str(data.get("field_key", "") or "").strip():
+            raise ValueError("field_key is required")
+        now = datetime.now(timezone.utc).isoformat()
+        row = {"id": str(uuid.uuid4()),
+               "inspection_id": data.get("inspection_id", ""),
+               "product_id": data.get("product_id", ""),
+               "field_key": str(data.get("field_key", "")).strip(),
+               "original_value": data.get("original_value"),
+               "corrected_value": data.get("corrected_value"),
+               "original_status": data.get("original_status",
+                                           "NEEDS_REVIEW"),
+               "original_confidence": data.get("original_confidence"),
+               "source": data.get("source", "officer-review"),
+               "evidence_snapshot": copy.deepcopy(
+                   data.get("evidence_snapshot") or {}),
+               "officer_user_id": data.get("officer_user_id", ""),
+               "created_at": now,
+               "verified": False,
+               "verified_by": "",
+               "verified_at": None,
+               "correction_reason": data.get("correction_reason", "")}
+        self.corrections[row["id"]] = copy.deepcopy(row)
+        return copy.deepcopy(row)
+
+    def list_corrections(self, inspection_id: str,
+                         product_id: str) -> list[dict[str, Any]]:
+        rows = [c for c in self.corrections.values()
+                if c.get("inspection_id") == inspection_id
+                and c.get("product_id") == product_id]
+        rows.sort(key=lambda r: r.get("created_at", ""))
+        return [copy.deepcopy(r) for r in rows]
+
+    def verify_correction(self, correction_id: str, verified: bool,
+                          verifier_id: str = "") -> dict[str, Any] | None:
+        row = self.corrections.get(correction_id)
+        if not row:
+            return None
+        row["verified"] = bool(verified)
+        row["verified_by"] = verifier_id or ""
+        row["verified_at"] = datetime.now(timezone.utc).isoformat() \
+            if verified else None
+        return copy.deepcopy(row)
+
+    def all_corrections(self) -> list[dict[str, Any]]:
+        rows = sorted(self.corrections.values(),
+                      key=lambda r: r.get("created_at", ""))
+        return [copy.deepcopy(r) for r in rows]
 
     # ---------------------------------------------------- notifications ---
     def create_notification(self, data: dict[str, Any]) -> dict[str, Any]:

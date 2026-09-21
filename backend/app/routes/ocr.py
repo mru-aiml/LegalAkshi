@@ -51,6 +51,15 @@ async def ocr_extract(
     back_image: UploadFile | None = File(None),
     images: list[UploadFile] | None = File(None),
     listing_image: UploadFile | None = File(None),
+    # Stage 2B: optional inspection context for analysis requirements so
+    # the vision stage requests only relevant unresolved groups. All
+    # optional — absent context degrades to high-value unresolved fields.
+    food: str | None = None,
+    imported: str | None = None,
+    ecommerce: str | None = None,
+    category: str | None = None,
+    quantity_type: str | None = None,
+    inspection_id: str | None = None,
     principal: Principal = Depends(get_principal),
 ):
     if not principal.user_id:
@@ -81,8 +90,66 @@ async def ocr_extract(
         ocr_service.configure_tesseract_fallback(_TESS_PROVIDER)
         if listing_bytes is None and not (images or []):
             # Legacy two-sided path (same behaviour, same patch point).
-            return ocr_service.extract_label(front_bytes, back_bytes)
-        return ocr_service.extract_label_multi(supplied,
-                                               tess_provider=_TESS_PROVIDER)
+            result = ocr_service.extract_label(front_bytes, back_bytes)
+            raws: list[tuple[bytes | None, str]] = [
+                (front_bytes, "front"), (back_bytes, "back")]
+        else:
+            result = ocr_service.extract_label_multi(
+                supplied, tess_provider=_TESS_PROVIDER)
+            raws = list(supplied)
+        return _maybe_enhance_with_vision(
+            request, result, raws, food=food, imported=imported,
+            ecommerce=ecommerce, category=category,
+            quantity_type=quantity_type, inspection_id=inspection_id)
     except OcrError as exc:
         raise HTTPException(status_code=502, detail=f"OCR provider failed: {exc}")
+
+
+def _opt_context_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "y")
+
+
+def _maybe_enhance_with_vision(
+    request: Request, result: dict,
+    raws: list[tuple[bytes | None, str]], **context: str | None,
+) -> dict:
+    """Stage 2B vision stage on the REAL pipeline result.
+
+    Runs AFTER the untouched OCR pipeline: resolves analysis
+    requirements for the inspection context, invokes the vision
+    provider on grouped unresolved fields (<=6 calls), reconciles,
+    and attaches ``vision`` + ``reconciliation`` keys. Any failure —
+    disabled provider, timeout, malformed output, requirements error —
+    returns the OCR result with an unavailable block. Never raises for
+    vision reasons (OCR errors propagate as before).
+    """
+    from app.services.package_intelligence import vision_stage as vs_mod
+
+    inspection_id = context.get("inspection_id")
+    try:
+        from app.services import analysis_requirements as req_mod
+
+        ctx = {k: v for k, v in {
+            "food": _opt_context_bool(context.get("food")),
+            "imported": _opt_context_bool(context.get("imported")),
+            "ecommerce": _opt_context_bool(context.get("ecommerce")),
+            "category": context.get("category"),
+            "quantity_type": context.get("quantity_type"),
+        }.items() if v is not None}
+        requirements = req_mod.get_analysis_field_requirements(
+            request.app.state.repo, ctx)
+    except Exception:
+        requirements = None
+    try:
+        return vs_mod.enhance_ocr_with_vision(
+            result, raws, requirements,
+            inspection_id=inspection_id)
+    except Exception as exc:  # absolute last resort: OCR-only
+        result["vision"] = {
+            "vision_enabled": False, "vision_provider": None,
+            "vision_model": None, "vision_status": "unavailable",
+            "vision_error": vs_mod._sanitize_error(exc),
+            "vision_calls": 0}
+        return result

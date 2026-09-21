@@ -90,10 +90,18 @@ class _MockTess:
                    for t, c in self._lines], engine=self.name)
 
 
-def _png_bytes() -> bytes:
-    from PIL import Image
+def _png_bytes(slot: int | None = None) -> bytes:
+    # Distinct panels need distinct pixels (Stage 3A.5 dedup); slots are
+    # 2D grid positions. Same slot twice = intentional duplicate.
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (900, 300), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -233,8 +241,8 @@ def test_benchmark_ins_500ii_preserved():
 
 
 # --------------------------------- service integration tests -------
-def _back_png():
-    return _png_bytes()
+def _back_png(slot: int | None = 0):
+    return _png_bytes(slot)
 
 
 def test_good_rapid_result_no_tesseract_call():
@@ -361,7 +369,8 @@ def test_no_tesseract_for_complete_full_package_path():
     })
     tess = _MockTess(lines=[("Salt", 0.9)])
     out = service.extract_label_multi(
-        [(_back_png(), "front"), (_back_png(), "back")],
+        [(_back_png(0), "front"),
+         (_back_png(1), "back")],
         provider=rapid, tess_provider=tess)
     assert tess.calls == []
     assert out["timings"]["tesseract_fallback_ms"] == 0

@@ -553,6 +553,21 @@ def _public_suggestion(row: dict) -> dict:
     }
 
 
+def _suggestions_unavailable(exc: Exception) -> HTTPException:
+    """503 with an actionable hint (never a bare 500).
+
+    A missing/unmigrated consumer_suggestions table is a deployment
+    issue, not a client error: name the migration and keep the original
+    detail for operators. Run scripts/verify_suggestions_schema.py to
+    confirm against the configured database.
+    """
+    return HTTPException(
+        status_code=503,
+        detail="suggestions store unavailable "
+               "(migration 004_consumer_suggestions.sql may not be applied; "
+               f"see backend/scripts/verify_suggestions_schema.py): {exc}")
+
+
 @router.post("/consumer/suggestions", status_code=201)
 def create_suggestion(body: dict, request: Request,
                       principal: Principal = Depends(get_principal)):
@@ -583,6 +598,10 @@ def create_suggestion(body: dict, request: Request,
             "location": str(body.get("location", ""))})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
     return _public_suggestion(saved)
 
 
@@ -592,7 +611,12 @@ def list_suggestions(request: Request,
     """The caller's own suggestions only (single bounded query)."""
     repo = _repo(request)
     who = principal.user_id or "anonymous-consumer"
-    return [_public_suggestion(r) for r in repo.list_suggestions(who)]
+    try:
+        return [_public_suggestion(r) for r in repo.list_suggestions(who)]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
 
 
 @router.get("/consumer/suggestions/{suggestion_id}")
@@ -604,15 +628,25 @@ def get_suggestion(suggestion_id: str, request: Request,
         _uuid.UUID(suggestion_id)
     except ValueError:
         raise HTTPException(status_code=422, detail="invalid suggestion_id")
-    row = repo.get_suggestion(suggestion_id)
+    try:
+        row = repo.get_suggestion(suggestion_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
     if not row:
         raise HTTPException(status_code=404, detail="suggestion not found")
     who = principal.user_id or "anonymous-consumer"
     if row.get("consumer_user_id") != who:
         raise HTTPException(status_code=403,
                             detail="not your suggestion")
-    return {**_public_suggestion(row),
-            "timeline": repo.suggestion_timeline(suggestion_id)}
+    try:
+        timeline = repo.suggestion_timeline(suggestion_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
+    return {**_public_suggestion(row), "timeline": timeline}
 
 
 @router.get("/consumer/overview")

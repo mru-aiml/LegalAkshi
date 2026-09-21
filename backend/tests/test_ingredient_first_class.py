@@ -50,10 +50,18 @@ class _MockProvider:
                    for t, c in rows], engine=self.name)
 
 
-def _png_bytes() -> bytes:
-    from PIL import Image
+def _png_bytes(slot: int | None = None) -> bytes:
+    # Distinct panels need distinct pixels (Stage 3A.5 dedup); slots are
+    # 2D grid positions. Same slot twice = intentional duplicate.
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (900, 300), "white")
+    if slot is not None:
+        col, row = slot % 3, (slot // 3) % 2
+        x, y = 60 + col * 280, 50 + row * 120
+        d = ImageDraw.Draw(img)
+        d.rectangle([x, y, x + 180, y + 70], fill="black")
+        d.text((x + 10, y + 20), f"P{slot}", fill="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -331,7 +339,8 @@ def test_ingredients_reconciled_across_front_back():
                  ("MRP Rs. 50", 0.9)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     # Strongest evidence per field wins; nothing overwritten by weaker.
     assert out["fields_detailed"]["quantity"]["value"] == "70"
@@ -433,7 +442,8 @@ def test_per_stage_timings_reported():
         "back": [("MRP Rs. 50", 0.91), ("MFD 05/2024", 0.9)],
     })
     out = service.extract_label_multi(
-        [(_png_bytes(), "front"), (_png_bytes(), "back")],
+        [(_png_bytes(0), "front"),
+         (_png_bytes(1), "back")],
         provider=provider)
     t = out["timings"]
     for key in ("stage1_ms", "ingredient_ms", "declaration_ms",

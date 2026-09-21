@@ -1,0 +1,18 @@
+{
+  "product": "template-product",
+  "verification_source": null,
+  "verified": false,
+  "fields": {
+    "product_name": {"value": null, "unit": null},
+    "quantity": {"value": null, "unit": null},
+    "mrp": {"value": null, "unit": "INR"},
+    "manufacturing_date": {"value": null, "unit": null},
+    "best_before": {"value": null, "unit": null},
+    "batch_lot": {"value": null, "unit": null},
+    "manufacturer": {"value": null, "unit": null},
+    "fssai_license": {"value": null, "unit": null},
+    "consumer_care": {"value": null, "unit": null},
+    "ingredients": {"value": null, "unit": null},
+    "veg_nonveg": {"value": null, "unit": null}
+  }
+}

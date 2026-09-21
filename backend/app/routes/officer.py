@@ -192,7 +192,14 @@ def list_officer_suggestions(
     Consumer identity is masked; the original suggestion text is never
     altered here — only status/note change via PATCH.
     """
-    rows = _repo(request).list_suggestions(None)
+    try:
+        rows = _repo(request).list_suggestions(None)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        from app.routes.consumer import _suggestions_unavailable
+
+        raise _suggestions_unavailable(exc)
     needle = (q or "").strip().lower()
     out = []
     for row in rows:
@@ -217,19 +224,33 @@ def list_officer_suggestions(
 @router.get("/officer/suggestions/{suggestion_id}")
 def get_officer_suggestion(suggestion_id: str, request: Request,
                            principal: Principal = officer):
+    from app.routes.consumer import _suggestions_unavailable
+
     repo = _repo(request)
     _uuid(suggestion_id, "suggestion_id")
-    row = repo.get_suggestion(suggestion_id)
+    try:
+        row = repo.get_suggestion(suggestion_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
     if not row:
         raise HTTPException(status_code=404, detail="suggestion not found")
-    return {**_officer_suggestion(row),
-            "timeline": repo.suggestion_timeline(suggestion_id)}
+    try:
+        timeline = repo.suggestion_timeline(suggestion_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
+    return {**_officer_suggestion(row), "timeline": timeline}
 
 
 @router.patch("/officer/suggestions/{suggestion_id}")
 def review_suggestion(suggestion_id: str, body: dict, request: Request,
                       principal: Principal = Depends(require_roles("officer"))):
     """Officer status transition + optional note (lifecycle-validated)."""
+    from app.routes.consumer import _suggestions_unavailable
+
     repo = _repo(request)
     _uuid(suggestion_id, "suggestion_id")
     to_status = str(body.get("to_status", "")).upper()
@@ -242,10 +263,19 @@ def review_suggestion(suggestion_id: str, body: dict, request: Request,
                                      note)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
     if not row:
         raise HTTPException(status_code=404, detail="suggestion not found")
     repo.audit(principal.user_id or principal.role, "STATUS_CHANGE",
                "suggestion", suggestion_id,
                {"to_status": to_status, "note": note})
-    return {**_officer_suggestion(row),
-            "timeline": repo.suggestion_timeline(suggestion_id)}
+    try:
+        timeline = repo.suggestion_timeline(suggestion_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _suggestions_unavailable(exc)
+    return {**_officer_suggestion(row), "timeline": timeline}

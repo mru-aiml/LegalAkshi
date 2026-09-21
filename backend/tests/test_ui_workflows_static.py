@@ -24,6 +24,8 @@ VERIFY = (ROOT / "artifacts" / "nutricheck" / "src" / "pages"
           / "consumer-verify.tsx").read_text(encoding="utf-8")
 WORKSPACE = (ROOT / "artifacts" / "nutricheck" / "src" / "pages"
              / "inspector-workspace.tsx").read_text(encoding="utf-8")
+SCAN = (ROOT / "artifacts" / "nutricheck" / "src" / "pages"
+        / "officer-scan.tsx").read_text(encoding="utf-8")
 
 
 # ------------------------------------------------- consumer (B26) ---
@@ -227,6 +229,68 @@ def test_officer_scan_route_untouched():
     assert 'path="/inspector/scan"' in APP
     assert "OfficerScanPage" in APP
     assert 'path="/inspector/audit/:id"' in APP
+
+
+# ------------------------------------------------- Stage-1E review ---
+def test_readiness_panel_and_gate():
+    assert 'data-testid="readiness-panel"' in SCAN
+    assert 'data-testid="readiness-auto"' in SCAN
+    assert 'data-testid="readiness-review"' in SCAN
+    assert 'data-testid="readiness-missing"' in SCAN
+    assert 'data-testid="readiness-required"' in SCAN
+    assert 'data-testid="readiness-blocked"' in SCAN
+    assert 'data-testid="readiness-ready"' in SCAN
+    assert "required by the applicable checks need" in SCAN
+    assert "analysisRequirements" in SCAN
+    assert "/analysis/requirements" in API
+
+
+def test_corrections_record():
+    assert 'data-testid="corrections-panel"' in SCAN
+    assert 'data-testid={`correction-' in SCAN
+    assert "setCorrections" in SCAN
+
+
+# ------------------------------------------------- Scan & Inspect V2 ---
+def test_api_timeout_scoping_mutations_vs_reads():
+    # The 12s ordinary-read timeout is GET-only; mutations share the
+    # bounded long-running budget (never infinite).
+    assert "(opts.longRunning || !isGet)" in API
+    assert "12s ordinary-read timeout" in API
+    assert "{ longRunning: true }" in API  # analyze + report JSON
+
+
+def test_api_fetch_error_mapping_actionable():
+    assert "Cannot reach the LegalAkshi backend at" in API
+    assert "Check the API URL and that the backend is running" in API
+
+
+def test_review_evidence_panels():
+    assert "Review evidence" in SCAN
+    # Group testids render from titles: Product, Label declarations,
+    # Food information.
+    assert "testId={`evidence-${title" in SCAN
+    for group in ("'Product',", "'Label declarations',",
+                  "'Food information',"):
+        assert group in SCAN, group
+    for marker in ("OCR value:", "confidence:", "status:", "source:",
+                   "box:"):
+        assert marker in SCAN, marker
+
+
+def test_review_corrected_vs_auto_vs_manual():
+    assert "OFFICER CORRECTED" in SCAN
+    assert "Officer corrected" in SCAN
+    assert "Auto-detected" in SCAN
+    assert "setCorrected" in SCAN
+
+
+def test_review_image_quality_panel():
+    assert 'data-testid="image-quality-panel"' in SCAN
+    assert 'data-testid={`image-quality-' in SCAN
+    for grade in ("sharpness", "brightness", "contrast", "resolution",
+                  "readability"):
+        assert grade in SCAN, grade
 
 
 # ------------------------------------------------- performance pass ---
