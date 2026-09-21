@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-
-=======
 # ⚖️ LegalAkshi
 
 ### AI-Assisted Food Package Compliance & Verification Platform
@@ -508,4 +505,4 @@ All roadmap items are **future work**, not implemented features.
 ## 📜 Disclaimer
 
 LegalAkshi is an inspection-assistance and prototype system. System-generated outputs (extractions, findings, scores, reports) assist human officers and must not be represented as official regulatory determinations unless the deployment is officially authorised and integrated with the competent authority.
->>>>>>> cf93d31 (improved ocr feature)
+
