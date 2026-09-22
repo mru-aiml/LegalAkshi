@@ -165,7 +165,23 @@ export type OcrResponse = {
   images_analyzed?: number;
   timings?: { total_ms?: number; provider_calls?: number; stage1_ms?: number; ingredient_ms?: number; declaration_ms?: number; nutrition_ms?: number; symbol_ms?: number; reconciliation_ms?: number; images?: Record<string, { image_ms?: number; stage1_ms?: number; orientation?: string; image_quality?: Record<string, string | number | null>; regions?: { kind: string; ms: number; lines: number }[] }> };
   food?: { status: string; provenance: string; fields: Record<string, { value: unknown; confidence: number | null; provenance: string; detection?: string }>; timings?: { ingredients_ms?: number; nutrition_ms?: number } };
-  veg_nonveg_symbol?: { status: 'DETECTED' | 'NOT_DETECTED' | 'NEEDS_REVIEW'; classification: 'VEGETARIAN' | 'NON_VEGETARIAN' | 'UNKNOWN'; confidence: number | null; provenance: string; reason?: string };
+  veg_nonveg_symbol?: { status: 'DETECTED' | 'NOT_DETECTED' | 'NEEDS_REVIEW'; classification: 'VEGETARIAN' | 'NON_VEGETARIAN' | 'UNKNOWN'; confidence: number | null; provenance: string; reason?: string; image?: string | null; crop_verdict?: { classification?: string; confidence?: number | null; status?: string; reason?: string; image?: string | null } | null };
+  // End-to-end phase timing (Task 1): backend pipeline clocks, never
+  // estimates. total_backend_ms always covers the full request; the
+  // frontend independently measures click-to-result elapsed time.
+  timing?: {
+    images?: number; ocr_ms?: number | null; preprocessing_ms?: number | null;
+    decode_ms?: number | null; ai_verification_ms?: number | null;
+    reconciliation_ms?: number | null; vision_calls?: number;
+    consolidated?: boolean; total_backend_ms?: number | null;
+  };
+  // OpenCV x Gemini symbol matrix (Task 5). combined: AI_CV_VERIFIED |
+  // AI_EXTRACTED_REVIEW | CONFLICT_REVIEW | CV_ONLY | NOT_DETECTED.
+  symbol_verification?: {
+    opencv?: { classification?: string; confidence?: number | null; status?: string | null };
+    gemini?: { classification?: string; confidence?: number | null };
+    combined?: string; note?: string; ai_available?: boolean;
+  };
   // Stage 2B: present when the backend ran the vision stage (or its
   // OCR-only fallback). Absent on older backends — callers must cope.
   vision?: VisionDiagnostics;
@@ -242,6 +258,15 @@ export type BackendNotification = {
  *  this via `longRunning: true`. */
 export const READ_TIMEOUT_MS = 12000;
 export const LONG_TIMEOUT_MS = 180000;
+/** OCR extraction budget: the staged backend pipeline reads up to 8
+ *  package photos sequentially (one fast pass each, then targeted
+ *  crops), so a full inspection legitimately runs for minutes.
+ *  Override per deployment with VITE_OCR_TIMEOUT_MS; must stay >= the
+ *  backend OCR_TIMEOUT_SECONDS budget (default 420s). */
+export const OCR_TIMEOUT_MS = (() => {
+  const raw = Number(import.meta.env.VITE_OCR_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 420000;
+})();
 
 class TimeoutError extends Error {
   constructor(path: string, ms: number) {
@@ -533,15 +558,17 @@ export const api = {
     if (back) form.append('back_image', back);
     for (const file of extras) form.append('images', file);
     if (listing) form.append('listing_image', listing);
-    // OCR runs seconds-to-minutes; never the 12s ordinary-read timeout.
+    // OCR runs seconds-to-minutes for up to 8 photos; it gets its own
+    // extraction budget (never the 12s ordinary-read timeout, never an
+    // unconditional abort at 3 minutes while the backend is working).
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), LONG_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), OCR_TIMEOUT_MS);
     let res: Response;
     try {
       res = await fetch(`${API_V1}/ocr/extract`, { method: 'POST', headers, body: form, signal: ctrl.signal });
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        throw new Error(`OCR timed out after ${Math.round(LONG_TIMEOUT_MS / 60000)} minutes — try fewer or smaller photos.`);
+        throw new Error(`OCR timed out after ${Math.round(OCR_TIMEOUT_MS / 60000)} minutes — try fewer or smaller photos.`);
       }
       throw e;
     } finally {
@@ -570,8 +597,9 @@ export const api = {
       fields: Record<string, {
         field: string; final_value: string | null; status: OcrFieldStatus;
         confidence: number; sources: string[];
-        candidates: { source: string; value: string; confidence: number | null }[];
-        agreement: string; evidence: (string | null)[]; needs_review_reason: string;
+        candidates: { source: string; value: string; confidence: number | null; handwritten?: boolean; evidence_location?: string | null }[];
+        agreement: string; verdict?: string;
+        evidence: (string | null)[]; needs_review_reason: string;
       }>;
       readiness: { ready: boolean; blocked_fields: string[] };
       diagnostics: Record<string, unknown>;

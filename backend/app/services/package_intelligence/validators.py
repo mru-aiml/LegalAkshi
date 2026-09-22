@@ -20,7 +20,7 @@ _FSSAI_WORD_DAMAGED = re.compile(r"fssai?|fss[l1i]|essai|f[5s]sai", re.I)
 _DATE_ANCHOR = re.compile(
     r"\bmfd\b|\bmfg\b|manufactur|packed?\s*(on|by)?|\bpkd\b|\bpkg\b|"
     r"date\s*of\s*(manufacture|packing|packaging)|best\s*before|use\s*by|"
-    r"use-by|expir|consume\s*before", re.I)
+    r"use-by|\bexp\b|expir|consume\s*before", re.I)
 _CARE_ANCHOR = re.compile(
     r"care|call|customer|toll|helpline|contact|complaint|phone|tel|"
     r"consumer|service|feedback|@", re.I)
@@ -411,6 +411,8 @@ VALIDATORS = {
     "mrp": validate_mrp_candidate,
     "quantity": validate_quantity_candidate,
     "manufacturing_date": validate_date_candidate,
+    "date_of_packing": validate_date_candidate,
+    "expiry_date": validate_date_candidate,
     "best_before": validate_date_candidate,
     "use_by": validate_date_candidate,
     "fssai_license": validate_fssai_candidate,
@@ -503,7 +505,8 @@ def _final_evidence_check(field, value, evidence, unit=None):
         if not _BATCH_ANCHOR.search(combined):
             return False, "batch needs batch evidence"
         return True, "ok"
-    if base in ("manufacturing_date", "best_before", "use_by"):
+    if base in ("manufacturing_date", "date_of_packing", "expiry_date",
+                "best_before", "use_by"):
         if not _DATE_ANCHOR.search(combined):
             return False, "date needs date evidence"
         return True, "ok"

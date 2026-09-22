@@ -26,15 +26,18 @@ Guarantees:
 from __future__ import annotations
 
 import io
+import logging
 import time
 from typing import Any
+
+log = logging.getLogger("legalakshi.vision_stage")
 
 # Stage 2B §3 grouped extraction plan (max 6 calls/inspection, target 2-4).
 STAGE2B_GROUPS: dict[str, list[str]] = {
     "A_product": ["product_name", "brand_name", "common_generic_name",
-                  "quantity", "unit"],
+                  "category", "quantity", "unit"],
     "B_declarations": ["mrp", "manufacturing_date", "best_before",
-                       "batch_lot"],
+                       "batch_lot", "date_of_packing", "expiry_date"],
     "C_business": ["manufacturer", "manufacturer_address",
                    "fssai_license", "consumer_care"],
     "D_ingredients": ["ingredients", "allergens"],
@@ -44,6 +47,47 @@ STAGE2B_GROUPS: dict[str, list[str]] = {
                     "nutrition_basis"],
     "F_symbols": ["veg_nonveg", "country_of_origin"],
 }
+
+# Prototype second-pass coverage (internal vision field names): the
+# declarations Gemini should attempt whenever OCR has not DETECTED
+# them. "Only unresolved" still holds — DETECTED fields never cost a
+# call. nutrition_information rides the bounded F_other tail.
+SECOND_PASS_PROTOTYPE_FIELDS: tuple[str, ...] = (
+    "product_name", "category", "manufacturer", "quantity", "unit",
+    "manufacturing_date", "mrp", "batch_lot", "best_before",
+    "date_of_packing", "expiry_date",
+    "fssai_license", "consumer_care", "country_of_origin",
+    "ingredients", "veg_nonveg", "nutrition_information",
+)
+
+# Fields eligible for the ONE targeted second call: the small
+# declaration block plus ingredients. Only fields still without a
+# usable value are re-requested, on the same images.
+TARGETED_SECOND_CALL_FIELDS: tuple[str, ...] = (
+    "mrp", "batch_lot", "manufacturing_date", "date_of_packing",
+    "expiry_date", "best_before", "ingredients",
+)
+
+
+def _with_prototype_fields(wanted: list[str],
+                           ocr_statuses: dict[str, str],
+                           ) -> list[str]:
+    """Union the wanted list with uncovered prototype fields.
+
+    Keeps the single-call budget identical (one consolidated request
+    regardless of field count) while guaranteeing the prototype
+    declarations are attempted whenever OCR missed them.
+    """
+    out = list(wanted or [])
+    for vision_field in SECOND_PASS_PROTOTYPE_FIELDS:
+        if vision_field in out:
+            continue
+        ocr_key = VISION_TO_OCR.get(vision_field, vision_field)
+        if (ocr_statuses or {}).get(ocr_key, "NOT_DETECTED") == \
+                "DETECTED":
+            continue
+        out.append(vision_field)
+    return out
 
 # Registry/OCR names -> vision field names for the "other applicable
 # declarations" tail (entries without an OCR key still get a bounded
@@ -66,12 +110,15 @@ REGISTRY_TO_VISION: dict[str, list[str]] = {
 VISION_TO_OCR: dict[str, str] = {
     "quantity": "quantity", "unit": "quantity", "mrp": "mrp",
     "manufacturing_date": "manufacturing_date",
+    "date_of_packing": "date_of_packing",
+    "expiry_date": "expiry_date",
     "best_before": "best_before", "batch_lot": "batch_lot",
     "manufacturer": "manufacturer",
     "manufacturer_address": "manufacturer_address",
     "fssai_license": "fssai_license", "consumer_care": "consumer_care",
     "product_name": "product_name", "brand_name": "product_name",
     "common_generic_name": "product_name",
+    "category": "category",
     "country_of_origin": "country_of_origin",
     "veg_nonveg": "veg_nonveg", "ingredients": "ingredients",
     "allergens": "allergens", "unit_sale_price": "unit_sale_price",
@@ -86,6 +133,107 @@ DEFAULT_PER_CALL_TIMEOUT_S = 30.0
 DEFAULT_OVERALL_TIMEOUT_S = 100.0
 # Vision-only DETECTED bar: strong evidence + validation + confidence.
 VISION_STRONG_CONF = 0.85
+# Values that count as "no usable vision value" for verdict purposes
+# (UNKNOWN is information about uncertainty, never a value).
+_VISION_MISSING_TOKENS = frozenset({"UNKNOWN", "UNCLEAR", ""})
+
+
+def _consolidated_enabled() -> bool:
+    """One-pass extraction first (config flag, default on)."""
+    try:
+        from app.core.config import get_settings
+
+        return bool(getattr(get_settings(),
+                            "LEGALAKSHI_VISION_CONSOLIDATED", True))
+    except Exception:
+        return True
+
+
+def _payload_hash(payload: Any) -> str | None:
+    """Stable bytes hash for send-dedupe (never logs contents)."""
+    try:
+        import hashlib as _hl
+
+        if isinstance(payload, (bytes, bytearray)):
+            return _hl.sha256(bytes(payload)).hexdigest()[:16]
+        if hasattr(payload, "tobytes"):
+            return _hl.sha256(payload.tobytes()).hexdigest()[:16]
+    except Exception:
+        pass
+    return None
+
+
+def _representative_original(
+    images: list[tuple[Any, str]],
+    ocr_result: dict[str, Any],
+) -> tuple[Any, str]:
+    """One representative ORIGINAL colour photo for the single pass.
+
+    Front panel preferred (role-aware when roles are known); the bytes
+    are the untouched upload — never a thresholded/grayscale OCR
+    variant — because logos, colours, the veg symbol and handwriting
+    must stay visible. Never raises.
+    """
+    panels = _representative_originals(images, ocr_result, max_panels=1)
+    if panels:
+        return panels[0]
+    labels = [label for _, label in images]
+    if not labels:
+        return None, "front"
+    return images[0]
+
+
+def _representative_originals(
+    images: list[tuple[Any, str]],
+    ocr_result: dict[str, Any],
+    max_panels: int = 2,
+) -> list[tuple[Any, str]]:
+    """Up to ``max_panels`` distinct ORIGINAL photos (front, then back).
+
+    Duplicate image bytes are never selected twice: identical uploads
+    cost one panel slot, never two sends. Never raises.
+    """
+    labels = [label for _, label in images]
+    if not labels:
+        return []
+    try:
+        from app.services.ocr import image_roles as _roles
+
+        _timings = (ocr_result.get("timings") or {})
+        _role_map = {lab: (info.get("role") if isinstance(info, dict)
+                           else None)
+                     for lab, info in
+                     (_timings.get("images") or {}).items()}
+        ordered = _roles.ordered_labels_for_group(
+            "A_product", labels,
+            {lab: (_role_map.get(lab) or "UNKNOWN") for lab in labels})
+    except Exception:
+        ordered = list(labels)
+    preferred = ["front", *[lab for lab in ordered if lab != "front"],
+                 "back"]
+    picked: list[tuple[Any, str]] = []
+    seen_hashes: set[str] = set()
+    seen_labels: set[str] = set()
+    for lab in preferred:
+        if len(picked) >= max(1, max_panels) or lab in seen_labels:
+            continue
+        for payload, label in images:
+            if label != lab or payload is None:
+                continue
+            digest = _payload_hash(payload)
+            if digest and digest in seen_hashes:
+                continue
+            if digest:
+                seen_hashes.add(digest)
+            seen_labels.add(label)
+            picked.append((payload, label))
+            break
+    if not picked:
+        first = next(((p, lab) for p, lab in images if p is not None),
+                     (None, "front"))
+        if first[0] is not None:
+            picked.append(first)
+    return picked[:max(1, max_panels)]
 
 
 def wanted_vision_fields(
@@ -368,6 +516,68 @@ def _norm_compare(field: str, value: Any, unit: Any = None) -> Any:
     return text.lower()
 
 
+def build_symbol_verification(
+    ocr_result: dict[str, Any],
+    vision_candidates: list[dict[str, Any]] | None = None,
+    ai_available: bool = False,
+) -> dict[str, Any]:
+    """OpenCV x Gemini vegetarian-symbol matrix (Task 5).
+
+    The existing OpenCV verdict is never overridden. Gemini acts as a
+    second visual verifier; any CV/Gemini disagreement stays in manual
+    review — never auto-resolved. NOT_DETECTED remains safe (never a
+    non-compliance signal).
+    """
+    cv = (ocr_result.get("veg_nonveg_symbol") or {})
+    cv_cls = str(cv.get("classification") or "UNKNOWN").strip().upper()
+    if cv_cls not in ("VEGETARIAN", "NON_VEGETARIAN"):
+        cv_cls = "UNKNOWN"
+    cv_conf = cv.get("confidence")
+    gem_value: str | None = None
+    gem_conf: float | None = None
+    for cand in vision_candidates or []:
+        if not isinstance(cand, dict) or cand.get("field") != "veg_nonveg":
+            continue
+        raw = str(cand.get("value") or "").strip().upper()
+        if raw in ("VEGETARIAN", "NON_VEGETARIAN"):
+            try:
+                conf = float(cand.get("confidence") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if gem_conf is None or conf > gem_conf:
+                gem_value, gem_conf = raw, round(conf, 3)
+    cv_hit = cv_cls in ("VEGETARIAN", "NON_VEGETARIAN")
+    if not ai_available:
+        combined = "CV_ONLY" if cv_hit else "NOT_DETECTED"
+        note = ("AI verification unavailable — OpenCV result stands; "
+                "inspector verifies on the package.")
+    elif cv_hit and gem_value == cv_cls:
+        combined = "AI_CV_VERIFIED"
+        note = "OpenCV and Gemini agree — still inspector-confirmed."
+    elif not cv_hit and gem_value:
+        combined = "AI_EXTRACTED_REVIEW"
+        note = "OpenCV found no mark; Gemini reports one — officer " \
+            "review required."
+    elif cv_hit and not gem_value:
+        combined = "CV_ONLY"
+        note = "Gemini could not confirm the mark — OpenCV result " \
+            "stands for review."
+    elif cv_hit and gem_value and gem_value != cv_cls:
+        combined = "CONFLICT_REVIEW"
+        note = "OpenCV and Gemini disagree — manual review required; " \
+            "never auto-resolved."
+    else:
+        combined = "NOT_DETECTED"
+        note = "no mark found by either visual layer; not a finding " \
+            "of non-compliance."
+    return {"opencv": {"classification": cv_cls, "confidence": cv_conf,
+                       "status": cv.get("status")},
+            "gemini": {"classification": gem_value or "NOT_DETECTED",
+                       "confidence": gem_conf},
+            "combined": combined, "note": note,
+            "ai_available": ai_available}
+
+
 def overlay_reconciliation(
     ocr_result: dict[str, Any],
     vision_candidates: list[dict[str, Any]],
@@ -425,9 +635,42 @@ def overlay_reconciliation(
                 None if value is None else str(value),
                 unit=unit, evidence=evidence or None)
             if not ok:
+                # Audit first (unchanged shape). Retain for review only
+                # when the model SAW something unusable (a relative
+                # best-before statement, an illegible read): final stays
+                # None so it is never usable, never a verdict. Pure
+                # NOT_DETECTED (nothing on the visible panels) stays
+                # dropped — absence is not review evidence.
+                from app.services.package_intelligence import (
+                    reconciliation as _recon_mod,
+                )
+
                 dropped.append({"field": vfield, "value": value,
                                 "reason": reason,
                                 "source": "vision"})
+                if str(cand.get("status") or "").upper() == \
+                        "NOT_DETECTED":
+                    continue
+                _ocr_usable = ocr_value not in (None, "")
+                fields[vfield] = {
+                    "field": vfield, "unit": unit,
+                    "image_id": cand.get("image_id"),
+                    "bbox": cand.get("bbox"),
+                    "provider": cand.get("provider"),
+                    "model": cand.get("model"),
+                    "evidence": [e for e in
+                                 [ocr_evidence, evidence] if e],
+                    "final_value": None,
+                    "status": "NEEDS_REVIEW", "confidence": 0.0,
+                    "sources": ["vision"],
+                    "candidates": [cand],
+                    "agreement": "SINGLE_SOURCE",
+                    "verdict": _recon_mod.reconciliation_verdict(
+                        ocr_value if _ocr_usable else None, None,
+                        "SINGLE_SOURCE", "NEEDS_REVIEW"),
+                    "needs_review_reason": "vision value not usable "
+                    f"as declared ({reason}); retained for review only",
+                }
                 continue
             entry = {
                 "field": vfield, "unit": unit,
@@ -512,6 +755,34 @@ def overlay_reconciliation(
     rec_ms = round((time.perf_counter() - t0) * 1000, 1)
     # Stage 2C §16 final gate (vision-influenced DETECTED only).
     fields = valid_mod.cross_validate_final(fields)
+    # Second-pass verdicts (OCR x Gemini relationship per field).
+    # Additive only: status/agreement/candidates are never renamed.
+    from app.services.package_intelligence.reconciliation import (
+        reconciliation_verdict as _verdict_fn,
+    )
+
+    def _usable(value: Any) -> Any | None:
+        text = str(value or "").strip()
+        if not text or text.upper() in ("UNKNOWN", "UNCLEAR"):
+            return None
+        return value
+
+    for _entry in fields.values():
+        if not isinstance(_entry, dict):
+            continue
+        _cands = _entry.get("candidates") or []
+        _ocr_v = next(
+            (c.get("value") for c in _cands
+             if isinstance(c, dict)
+             and c.get("source") in ("rapidocr", "tesseract")), None)
+        _vis_v = next(
+            (c.get("value") for c in _cands
+             if isinstance(c, dict) and c.get("source") == "vision"),
+            None)
+        _entry["verdict"] = _verdict_fn(
+            _usable(_ocr_v), _usable(_vis_v),
+            str(_entry.get("agreement") or ""),
+            str(_entry.get("status") or ""))
     readiness = pi_mod.readiness(
         {k: {"status": v.get("status")} for k, v in fields.items()},
         requirements)
@@ -546,10 +817,10 @@ def _sanitize_error(exc: BaseException) -> str:
     try:
         from app.core.config import get_settings
 
-        key = str(getattr(get_settings(), "LEGALAKSHI_VISION_API_KEY",
-                          "") or "")
-        if key and key in text:
-            text = text.replace(key, "[redacted]")
+        for attr in ("LEGALAKSHI_VISION_API_KEY", "GEMINI_API_KEY"):
+            key = str(getattr(get_settings(), attr, "") or "")
+            if key and key in text:
+                text = text.replace(key, "[redacted]")
     except Exception:
         pass
     for token in ("x-goog-api-key", "Authorization", "Bearer"):
@@ -592,6 +863,10 @@ def enhance_ocr_with_vision(
             "vision_error": reason, "vision_calls": 0,
             "vision_latency_ms": 0.0, "ocr_calls": ocr_calls,
             "ocr_ms": ocr_ms}
+        ocr_result["symbol_verification"] = build_symbol_verification(
+            ocr_result, [], ai_available=False)
+        log.info("vision disabled: %s (images=%d)", reason,
+                 len(images))
         return ocr_result
 
     resolved = provider if provider is not None else get_vision_provider()
@@ -604,6 +879,10 @@ def enhance_ocr_with_vision(
                             else None) or "NOT_DETECTED"
                         for k, v in detailed.items()}
         wanted = wanted_vision_fields(requirements, ocr_statuses)
+        wanted = _with_prototype_fields(wanted, ocr_statuses)
+        log.info("vision plan: images=%d wanted_fields=%d provider=%s",
+                 len(images), len(wanted),
+                 getattr(resolved, "name", None))
         if not wanted:
             ocr_result["vision"] = {
                 "vision_enabled": True,
@@ -617,6 +896,8 @@ def enhance_ocr_with_vision(
                 "no vision calls needed"}
             ocr_result["reconciliation"] = overlay_reconciliation(
                 ocr_result, [], requirements)
+            ocr_result["symbol_verification"] = build_symbol_verification(
+                ocr_result, [], ai_available=True)
             return ocr_result
         plan = plan_groups(wanted)
         from app.services.package_intelligence import regions as regions_mod
@@ -627,14 +908,160 @@ def enhance_ocr_with_vision(
         total_cached = 0
         group_reports: dict[str, Any] = {}
         calls_log: list[dict[str, Any]] = []
+        # Payload hashes that already failed/timed-out: never resend the
+        # same bytes to another group (duplicate-image waste).
+        failed_hashes: set[str] = set()
+        consolidated_fields: list[str] = []
+        # Consolidated single pass FIRST: one call, all wanted fields,
+        # ALL selected original photos. Grouped region-crop calls
+        # below then cover only fields still without any usable value —
+        # typically zero further calls instead of up to six.
+        if _consolidated_enabled() and wanted and images:
+            # Prototype demo mode: ALL selected package images for the
+            # same inspection ride ONE multimodal request (deduped,
+            # capped at 8) — not one representative image.
+            _panels = _representative_originals(images, ocr_result,
+                                                max_panels=8)
+            _image_id = "+".join(label for _, label in _panels) \
+                if _panels else "front"
+            # Consolidated failure leaves every field still wanted for
+            # the targeted/grouped fallbacks below.
+            still_wanted = list(wanted)
+            if _panels:
+                _hashes = [_payload_hash(p) for p, _ in _panels]
+                _ocr_cands, _layout_ctx = build_ocr_context(
+                    wanted, ocr_result, _image_id)
+                _layout_ctx["pass"] = "consolidated"
+                _layout_ctx["preprocessing_variant"] = "original-photo"
+                _layout_ctx["panels"] = [
+                    label for _, label in _panels]
+                _summary = extract_with_vision(
+                    resolved, _panels, wanted,
+                    ocr_candidates=_ocr_cands,
+                    layout_context=_layout_ctx,
+                    inspection_id=inspection_id,
+                    group_override="consolidated",
+                    per_call_timeout_s=per_call_timeout_s,
+                    call_log=calls_log, multi_images=len(_panels) > 1)
+                total_calls += _summary.get("calls", 0)
+                total_cached += _summary.get("cached", 0)
+                if _summary.get("error") and not _summary.get(
+                        "candidates"):
+                    for _h in _hashes:
+                        if _h:
+                            failed_hashes.add(_h)
+                    group_reports["consolidated"] = {
+                        "image": _image_id, "fields": list(wanted),
+                        "error": _summary.get("error")}
+                    log.info("vision consolidated pass image=%s fields=%d "
+                             "failed: %s", _image_id, len(wanted),
+                             _summary.get("error"))
+                else:
+                    all_candidates.extend(
+                        _summary.get("candidates") or [])
+                    consolidated_fields = sorted(
+                        {str(c.get("field")) for c in
+                         _summary.get("candidates") or []
+                         if isinstance(c, dict) and c.get("field")})
+                    group_reports["consolidated"] = {
+                        "image": _image_id, "fields": list(wanted),
+                        "n_candidates": len(
+                            _summary.get("candidates") or []),
+                        "cached": bool(_summary.get("cached")),
+                        "preprocessing_variant": "original-photo"}
+                    log.info("vision consolidated pass image=%s fields=%d "
+                             "candidates=%d calls=%d",
+                             _image_id, len(wanted),
+                             len(_summary.get("candidates") or []),
+                             _summary.get("calls", 0))
+                    # Blank NOT_DETECTED candidates are NOT coverage:
+                    # fields still without a usable value stay wanted
+                    # so the grouped back-panel fallback can rescue
+                    # them instead of going silent.
+                    covered = {
+                        str(c.get("field")) for c in
+                        _summary.get("candidates") or []
+                        if isinstance(c, dict) and c.get("field")
+                        and (c.get("value") not in (None, "")
+                             or str(c.get("status") or "").upper()
+                             == "DETECTED")}
+                    still_wanted = [f for f in wanted if f not in covered]
+                    # ONE targeted second call: the small declaration
+                    # block (MRP/batch/dates) plus ingredients, same
+                    # images, only fields still without a usable value.
+                    _missing = [f for f in TARGETED_SECOND_CALL_FIELDS
+                                if f in still_wanted]
+                    if _missing and total_calls < MAX_VISION_CALLS:
+                        _t_cands, _t_ctx = build_ocr_context(
+                            _missing, ocr_result, _image_id)
+                        _t_ctx["pass"] = "targeted-second"
+                        _t_ctx["preprocessing_variant"] = "original-photo"
+                        _t_ctx["panels"] = [
+                            label for _, label in _panels]
+                        _t_summary = extract_with_vision(
+                            resolved, _panels, _missing,
+                            ocr_candidates=_t_cands,
+                            layout_context=_t_ctx,
+                            inspection_id=inspection_id,
+                            group_override="targeted-second",
+                            per_call_timeout_s=per_call_timeout_s,
+                            call_log=calls_log,
+                            multi_images=len(_panels) > 1)
+                        total_calls += _t_summary.get("calls", 0)
+                        total_cached += _t_summary.get("cached", 0)
+                        if _t_summary.get("error") and not _t_summary.get(
+                                "candidates"):
+                            group_reports["targeted-second"] = {
+                                "image": _image_id,
+                                "fields": list(_missing),
+                                "error": _t_summary.get("error")}
+                        else:
+                            all_candidates.extend(
+                                _t_summary.get("candidates") or [])
+                            group_reports["targeted-second"] = {
+                                "image": _image_id,
+                                "fields": list(_missing),
+                                "n_candidates": len(
+                                    _t_summary.get("candidates") or []),
+                                "cached": bool(_t_summary.get("cached")),
+                                "preprocessing_variant": "original-photo"}
+                        log.info("vision targeted-second pass fields=%d "
+                                 "candidates=%d calls=%d",
+                                 len(_missing),
+                                 len(_t_summary.get("candidates") or []),
+                                 _t_summary.get("calls", 0))
+                        _covered2 = {
+                            str(c.get("field")) for c in
+                            _t_summary.get("candidates") or []
+                            if isinstance(c, dict) and c.get("field")
+                            and (c.get("value") not in (None, "")
+                                 or str(c.get("status") or "").upper()
+                                 == "DETECTED")}
+                        still_wanted = [f for f in still_wanted
+                                        if f not in _covered2]
+                    if still_wanted:
+                        plan = plan_groups(still_wanted)
+                    else:
+                        plan = {}
         deadline = t_start + overall_timeout_s
         for group, group_fields in plan.items():
+            if total_calls >= MAX_VISION_CALLS:
+                break
             remaining = deadline - time.perf_counter()
             if remaining <= 0.5:
                 break
             payload, image_id = select_group_image(group, images,
                                                    ocr_result)
             if payload is None:
+                continue
+            _phash = _payload_hash(payload)
+            if _phash and _phash in failed_hashes:
+                # Same bytes already failed/timed-out this inspection:
+                # skip instead of burning another 30s call budget.
+                group_reports[group] = {
+                    "image": image_id, "fields": group_fields,
+                    "error": "identical image bytes already failed in "
+                    "this inspection; skipped"}
                 continue
             ocr_cands, layout_ctx = build_ocr_context(
                 group_fields, ocr_result, image_id)
@@ -690,6 +1117,8 @@ def enhance_ocr_with_vision(
                 "mime_type": mime_type}
             if summary.get("error") and not summary.get("candidates"):
                 report["error"] = summary.get("error")
+                if _phash:
+                    failed_hashes.add(_phash)
                 group_reports[group] = report
                 continue
             all_candidates.extend(summary.get("candidates") or [])
@@ -713,7 +1142,13 @@ def enhance_ocr_with_vision(
             "vision_status_detail": "unavailable",
                 "vision_error": first_error, "vision_calls": 0,
                 "vision_latency_ms": vision_ms, "ocr_calls": ocr_calls,
-                "ocr_ms": ocr_ms}
+                "ocr_ms": ocr_ms,
+                "groups": group_reports}
+            ocr_result["symbol_verification"] = build_symbol_verification(
+                ocr_result, all_candidates, ai_available=False)
+            log.info("vision unavailable: images=%d calls=%d latency_ms=%s "
+                     "error=%s", len(images), total_calls, vision_ms,
+                     str(first_error)[:160])
             return ocr_result
         reconciliation = overlay_reconciliation(
             ocr_result, all_candidates, requirements)
@@ -737,6 +1172,8 @@ def enhance_ocr_with_vision(
         except Exception:
             pass
         ocr_result["reconciliation"] = reconciliation
+        ocr_result["symbol_verification"] = build_symbol_verification(
+            ocr_result, all_candidates, ai_available=True)
         group_errors = [g for g, rep in group_reports.items()
                         if rep.get("error")]
         # Stage 2C §3 explicit states: ok / partial / unavailable.
@@ -762,12 +1199,19 @@ def enhance_ocr_with_vision(
             "groups": group_reports,
             "calls_log": calls_log,
             "cached": total_cached,
+            "consolidated": bool(consolidated_fields),
+            "consolidated_fields": consolidated_fields,
             "fields": {"detected": reconciliation["field_counts"][
                 "detected"],
                 "needs_review": reconciliation["field_counts"][
                 "needs_review"],
                 "not_detected": reconciliation["field_counts"][
                 "not_detected"]}}
+        log.info("vision done: images=%d calls=%d (consolidated=%s) "
+                 "latency_ms=%s reconciliation_ms=%s verdicts=%s",
+                 len(images), total_calls, bool(consolidated_fields),
+                 vision_ms, reconciliation.get("reconciliation_ms"),
+                 _verdict_counts(reconciliation))
         return ocr_result
     except Exception as exc:  # never break the inspection
         ocr_result["vision"] = {
@@ -780,4 +1224,25 @@ def enhance_ocr_with_vision(
             "vision_latency_ms": round(
                 (time.perf_counter() - t_start) * 1000, 1),
             "ocr_calls": ocr_calls, "ocr_ms": ocr_ms}
+        try:
+            ocr_result["symbol_verification"] = \
+                build_symbol_verification(
+                    ocr_result, [], ai_available=False)
+        except Exception:
+            pass
+        log.info("vision exception: %s", _sanitize_error(exc))
         return ocr_result
+
+
+def _verdict_counts(reconciliation: dict[str, Any]) -> dict[str, int]:
+    """Verdict histogram for the phase log (never raises)."""
+    counts: dict[str, int] = {}
+    try:
+        for entry in (reconciliation.get("fields") or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            verdict = str(entry.get("verdict") or "UNKNOWN")
+            counts[verdict] = counts.get(verdict, 0) + 1
+    except Exception:
+        pass
+    return counts

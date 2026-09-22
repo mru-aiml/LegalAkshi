@@ -23,6 +23,42 @@ from app.services.package_intelligence.validators import validate_field
 AGREEMENT = ("AGREE", "CONFLICT", "SINGLE_SOURCE", "NO_EVIDENCE")
 HIGH_CONFIDENCE = 0.85
 
+# Second-pass verdicts (OCR x Gemini). Stored ALONGSIDE the stable
+# status/agreement keys, which are never renamed:
+# - AI_VERIFIED: OCR + Gemini agree (combined confidence = min).
+# - CONFLICT: both found values but disagree — officer must review.
+# - AI_EXTRACTED: OCR missing, Gemini confidently found — review.
+# - OCR_ONLY: OCR found, Gemini could not — OCR value stands.
+# - NOT_DETECTED: neither source found the field.
+VERDICTS = ("AI_VERIFIED", "CONFLICT", "AI_EXTRACTED", "OCR_ONLY",
+            "NOT_DETECTED")
+
+
+def reconciliation_verdict(ocr_value: Any,
+                           vision_value: Any,
+                           agreement: str,
+                           status: str) -> str:
+    """Map (OCR value, vision value, agreement) to a second-pass verdict.
+
+    Pure function — no validation, no invention. The verdict describes
+    the OCR x Gemini relationship only; the entry ``status``
+    (DETECTED / NEEDS_REVIEW / NOT_DETECTED) independently decides
+    whether officer review is required. Used by the vision overlay and
+    unit-tested directly.
+    """
+    _ = status
+    ocr_hit = ocr_value not in (None, "")
+    vision_hit = vision_value not in (None, "")
+    if agreement == "CONFLICT":
+        return "CONFLICT"
+    if agreement == "AGREE" and ocr_hit and vision_hit:
+        return "AI_VERIFIED"
+    if vision_hit and not ocr_hit:
+        return "AI_EXTRACTED"
+    if ocr_hit and not vision_hit:
+        return "OCR_ONLY"
+    return "NOT_DETECTED"
+
 
 def _norm(field: str, value: Any, unit: Any = None) -> Any:
     text = str(value or "").strip().replace(",", "")

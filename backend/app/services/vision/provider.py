@@ -23,6 +23,23 @@ VISION_UNREACHABLE = "UNREACHABLE"
 VISION_AVAILABLE = "AVAILABLE"
 
 
+def _resolve_api_key(settings: Any) -> str:
+    """Server-side key resolution (never exposed to callers).
+
+    Order: LEGALAKSHI_VISION_API_KEY, then the plain GEMINI_API_KEY
+    alias. Both name the same secret; presence booleans (never the
+    key itself) are what diagnostics report.
+    """
+    try:
+        key = str(getattr(settings, "LEGALAKSHI_VISION_API_KEY", "")
+                  or "").strip()
+        if key:
+            return key
+        return str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
+    except Exception:
+        return ""
+
+
 def get_vision_config() -> dict[str, Any]:
     from app.core.config import get_settings
 
@@ -33,7 +50,7 @@ def get_vision_config() -> dict[str, Any]:
         model = str(getattr(settings, "LEGALAKSHI_VISION_MODEL", "")
                     or "").strip()
         enabled = bool(getattr(settings, "LEGALAKSHI_VISION_ENABLED", False))
-        has_key = bool(getattr(settings, "LEGALAKSHI_VISION_API_KEY", ""))
+        has_key = bool(_resolve_api_key(settings))
     except Exception:
         return {"provider": "", "model": "", "enabled": False,
                 "configured": False, "api_key_present": False}
@@ -126,8 +143,7 @@ def get_vision_provider(explicit: str | None = None) -> Any | None:
         from app.services.vision.gemini_provider import GeminiVisionProvider
 
         provider = GeminiVisionProvider(
-            api_key=str(getattr(settings, "LEGALAKSHI_VISION_API_KEY", "")
-                        or ""),
+            api_key=_resolve_api_key(settings),
             model=str(getattr(settings, "LEGALAKSHI_VISION_MODEL", "") or ""))
         if not provider.available():
             log.warning("vision provider gemini requested but not "

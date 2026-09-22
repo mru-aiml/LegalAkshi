@@ -11,6 +11,18 @@ from typing import Any
 
 VISION_STATUSES = ("DETECTED", "NEEDS_REVIEW", "NOT_DETECTED")
 
+# Second-pass detail vocabulary (Gemini reports these; they are mapped
+# onto the stable VISION_STATUSES below — never stored raw as verdicts).
+# FOUND: value clearly readable on the pack.
+# NOT_VISIBLE: the declaration is not on the visible panels.
+# UNREADABLE: present but not legible (blur/glare/handwriting).
+# AMBIGUOUS: visible but uncertain (conflict, partial occlusion).
+VISION_DETAIL_STATUSES = ("FOUND", "NOT_VISIBLE", "UNREADABLE", "AMBIGUOUS")
+
+# Vegetarian-symbol value vocabulary for the veg_nonveg field.
+VEG_SYMBOL_VALUES = ("VEGETARIAN", "NON_VEGETARIAN", "NOT_DETECTED",
+                     "AMBIGUOUS")
+
 # Grouped extraction tasks (bounded: never one AI call per field).
 VISION_FIELD_GROUPS: dict[str, list[str]] = {
     "product": ["product_name", "brand_name", "common_generic_name"],
@@ -49,6 +61,25 @@ def validate_vision_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
         value = str(value).strip()
         if value == "":
             value = None
+    # Second-pass detail vocabulary maps onto the stable statuses:
+    # NOT_VISIBLE -> NOT_DETECTED; UNREADABLE/AMBIGUOUS -> NEEDS_REVIEW
+    # (value kept for audit, never usable as a detection). FOUND keeps
+    # the reported status. Unknown detail strings are ignored safely.
+    detail = str(raw.get("detail_status", "") or "").strip().upper()
+    if detail and detail in VISION_DETAIL_STATUSES:
+        if detail == "NOT_VISIBLE":
+            status, value = "NOT_DETECTED", None
+        elif detail in ("UNREADABLE", "AMBIGUOUS") and status == "DETECTED":
+            status = "NEEDS_REVIEW"
+    # Vegetarian-symbol value vocabulary: only the four known marks are
+    # kept; anything else becomes AMBIGUOUS (review, never a verdict).
+    # NOT_DETECTED/AMBIGUOUS symbols carry no usable value.
+    if field == "veg_nonveg" and value is not None:
+        if str(value).strip().upper() not in VEG_SYMBOL_VALUES:
+            value, status = "AMBIGUOUS", "NEEDS_REVIEW"
+        elif str(value).strip().upper() in ("NOT_DETECTED", "AMBIGUOUS"):
+            value, status = str(value).strip().upper(), "NEEDS_REVIEW" \
+                if status == "DETECTED" else status
     if status == "DETECTED" and value in (None, ""):
         # A detection with no value is incoherent — demote, never accept.
         status = "NEEDS_REVIEW"
@@ -73,6 +104,13 @@ def validate_vision_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
         "bbox": bbox,
         "image_id": raw.get("image_id"),
         "source": "vision",
+        # Second-pass provenance (optional; passed through untouched):
+        # where on the pack the value was seen, and whether the text
+        # is hand-written/stamped (MRP, batch, dates often are).
+        "detail_status": detail or None,
+        "evidence_location": raw.get("evidence_location"),
+        "source_location": raw.get("source_location"),
+        "handwritten": bool(raw.get("handwritten", False)),
     }
 
 

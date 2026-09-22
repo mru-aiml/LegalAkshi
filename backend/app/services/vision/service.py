@@ -21,6 +21,16 @@ from app.services.vision.schemas import (
 
 log = logging.getLogger("legalakshi.vision")
 
+
+def _safe_error_text(exc: BaseException, limit: int = 200) -> str:
+    """One-line provider failure for logs/UI (never key material)."""
+    text = f"{type(exc).__name__}: {exc}"
+    for token in ("x-goog-api-key", "Authorization", "Bearer",
+                  "API_KEY", "api_key"):
+        if token.lower() in text.lower():
+            return "[auth material redacted]"
+    return text[:limit]
+
 # In-process per-inspection cache: inspection_id -> {(image_id, group): cands}.
 _cache: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
 
@@ -42,12 +52,16 @@ def extract_with_vision(
     group_override: str | None = None,
     per_call_timeout_s: float = 30.0,
     call_log: list[dict[str, Any]] | None = None,
+    multi_images: bool = False,
 ) -> dict[str, Any]:
     """Run grouped vision extraction within the call budget.
 
     ``group_override`` treats the request as one pre-planned Stage-2B
     group (single provider call on the supplied image). Otherwise the
-    requested fields are mapped onto VISION_FIELD_GROUPS. Every
+    requested fields are mapped onto VISION_FIELD_GROUPS. When
+    ``multi_images`` is true, ONE call carries up to two panels of the
+    same package (e.g. front+back originals) instead of one — still a
+    single provider call, never one per image. Every
     candidate is stamped with provider + model (§5). Each provider call
     runs under ``per_call_timeout_s`` (timeouts degrade to OCR-only,
     never block inspection). ``call_log`` (when supplied) receives one
@@ -90,7 +104,17 @@ def extract_with_vision(
             summary["error"] = (summary["error"] or "") + \
                 " vision call budget exhausted;"
             break
-        image_np, image_id = images[0]
+        if multi_images and len(images) > 1:
+            # One call, ALL distinct panels of the same inspection
+            # (deduped upstream, capped here as a backstop) — still a
+            # single provider call, never one per image.
+            picked = list(images[:8])
+            image_arg: Any = [payload for payload, _ in picked]
+            image_id = "+".join(str(label) for _, label in picked)
+            image_np = image_arg
+        else:
+            image_np, image_id = images[0]
+            image_arg = image_np
         # Stage 2B §10: identical image + group + prompt share one call;
         # a different prompt (fields/OCR context) is a different request.
         key = (str(image_id), group, _prompt_digest(
@@ -106,7 +130,7 @@ def extract_with_vision(
         t_call = time.perf_counter()
         try:
             raw = _call_with_timeout(
-                provider, image_np, fields, ocr_candidates,
+                provider, image_arg, fields, ocr_candidates,
                 layout_context, max(0.5, float(per_call_timeout_s)))
             call_status = "ok"
         except TimeoutError:
@@ -120,8 +144,10 @@ def extract_with_vision(
                     "timeout", layout_context))
             continue
         except Exception as exc:
+            # Actual provider error text (HTTP status/body when the
+            # provider supplies it), sanitised — never a bare fallback.
             summary["error"] = f"vision call failed ({group}): " \
-                f"{type(exc).__name__}"
+                f"{_safe_error_text(exc)}"
             if call_log is not None:
                 call_log.append(_log_entry(
                     image_id, group, image_np, provider_name,
@@ -162,15 +188,23 @@ def _log_entry(image_id: Any, group: str, payload: Any,
     size: int | None = None
     mime: str | None = None
     try:
-        if isinstance(payload, (bytes, bytearray)):
-            size = len(payload)
-            first = bytes(payload[:12])
-            if first[:8] == b"\x89PNG\r\n\x1a\n":
-                mime = "image/png"
-            elif first[:2] == b"\xff\xd8":
-                mime = "image/jpeg"
-            else:
-                mime = "application/octet-stream"
+        blobs = list(payload) if isinstance(payload, (list, tuple)) \
+            else [payload]
+        total = 0
+        for blob in blobs:
+            if isinstance(blob, (bytes, bytearray)):
+                total += len(blob)
+                if mime is None:
+                    first = bytes(blob[:12])
+                    if first[:8] == b"\x89PNG\r\n\x1a\n":
+                        mime = "image/png"
+                    elif first[:2] == b"\xff\xd8":
+                        mime = "image/jpeg"
+                    else:
+                        mime = "application/octet-stream"
+        size = total or None
+        if len(blobs) > 1 and mime:
+            mime = f"{mime} x{len(blobs)}"
     except Exception:
         pass
     ctx = layout_context or {}

@@ -14,10 +14,14 @@ pyjwt>=2.8
 cryptography>=44.0  # tests: RS256 round-trip; production JWKS via PyJWT
 # Real OCR (RapidOCR/ONNX CPU — no system binaries, no torch/paddle).
 # PaddleOCR rejected: ~1GB paddle dep, uncertain cp313/Windows support.
-# Tesseract rejected: no system binary available, fragile per-machine setup.
 rapidocr_onnxruntime>=1.2
 numpy>=1.26
 pillow>=10.0
+# Direct dependency (also arrives transitively via rapidocr-onnxruntime):
+# OpenCV preprocessing (orientation/deskew/quality/layout analysis) and
+# the visual veg/non-veg symbol detector. Verified with:
+#   python -c "import cv2; print(cv2.__version__)"
+opencv-python>=4.8
 # Optional: wrapper for the Tesseract 5 system binary, used solely by the
 # hybrid ingredient fallback (RapidOCR stays primary). The binary itself
 # (UB-Mannheim Tesseract 5 + eng traineddata) must be installed separately;

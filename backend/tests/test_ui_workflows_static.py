@@ -500,3 +500,120 @@ def test_suggestions_migration_additive():
     schema = (ROOT / "backend" / "legalakshi_schema_v3_final.sql"
               ).read_text(encoding="utf-8")
     assert "consumer_suggestions" not in schema
+
+
+# --------------------------------- 8-image Scan & Inspect hardening ---
+def test_scan_eight_package_image_limit():
+    # One shared cap, front + back + extras combined (listing excluded).
+    assert "MAX_PACKAGE_IMAGES = 8" in SCAN
+    assert "package images total" in SCAN
+    assert 'data-testid="text-package-count"' in SCAN
+    assert 'data-testid="text-package-over-limit"' in SCAN
+    assert "maximum is {MAX_PACKAGE_IMAGES} package images" in SCAN
+    # Overflow extras are dropped with an explicit message, never
+    # silently; the Run button is gated while over the limit.
+    assert "keeping the first" in SCAN
+    assert "overLimit" in SCAN
+
+
+def test_scan_extra_photo_removal():
+    # Front/back slots keep their Remove affordance and extras gain a
+    # Clear control; removal state flows back into the count gate.
+    assert "onRemove" in SCAN
+    assert 'data-testid="button-clear-extra-photos"' in SCAN
+    assert "setExtraFiles([])" in SCAN
+
+
+def test_scan_veg_symbol_three_state_panel():
+    # Vegetarian / Non-Vegetarian / Not-detected states with confidence;
+    # a failed detection never renders as Non-Vegetarian.
+    assert 'data-testid="veg-symbol-panel"' in SCAN
+    assert 'data-testid="veg-symbol-verdict"' in SCAN
+    assert "✓ Vegetarian" in SCAN
+    assert "✕ Non-Vegetarian" in SCAN
+    assert "? Not detected" in SCAN
+    assert "Manual verification required" in SCAN
+    assert "never render" in SCAN  # guard comment documents the rule
+
+
+def test_api_ocr_timeout_budget_configurable():
+    # OCR has its own extraction budget (default 7 min, matching the
+    # backend OCR_TIMEOUT_SECONDS), overridable per deployment — never
+    # an unconditional abort at 3 minutes while the backend works.
+    assert "OCR_TIMEOUT_MS" in API
+    assert "VITE_OCR_TIMEOUT_MS" in API
+    assert "420000" in API
+    assert "OCR timed out after ${Math.round(OCR_TIMEOUT_MS / 60000)}" in API
+
+
+# --------------------------------- Gemini second-pass UI (Tasks 1/5/7) ---
+def test_scan_end_to_end_timing_display():
+    # Total inspection time, never the OCR phase reported as the total.
+    assert "Inspection completed in" in SCAN
+    assert 'data-testid="text-images-analyzed"' in SCAN
+    assert "AI verification:" in SCAN
+    assert "setTotalElapsedMs" in SCAN
+    assert "setPhaseMs" in SCAN
+
+
+def test_scan_ai_unavailable_fallback_message():
+    # Vision failure degrades to OCR-only with this exact message —
+    # never treated as a failed inspection.
+    assert "AI verification unavailable — OCR results shown." in SCAN
+    assert 'data-testid="text-vision-status"' in SCAN
+
+
+def test_scan_second_pass_field_badges():
+    # Verdict badges: verified agreement, review-gated AI values,
+    # conflicts. AI values are never styled as verified evidence.
+    assert "✓ AI verified ·" in SCAN
+    assert "AI extracted ·" in SCAN
+    assert "⚠ Conflict · Review required" in SCAN
+    assert "never verified evidence" in SCAN
+
+
+def test_scan_ai_suggestions_panel():
+    # OCR-blank + confident Gemini values surface as apply-on-review
+    # suggestions (ingredients, MRP, dates, batch, ...), with
+    # handwritten provenance where reported.
+    assert 'data-testid="ai-suggestions-panel"' in SCAN
+    assert 'data-testid={`button-use-ai-' in SCAN
+    assert "Use AI value" in SCAN
+    assert "handwritten" in SCAN
+    assert "AI-suggested value accepted by officer" in SCAN
+
+
+def test_scan_symbol_cv_ai_matrix():
+    # CV x AI symbol states: agreement shown, conflict never resolved.
+    assert "AI + CV verified" in SCAN
+    assert "never auto-resolved" in SCAN
+    assert 'verification={ocr?.symbol_verification' in SCAN
+
+
+# --------------------------------- Live-migration UI (Tasks 12/13/8) ---
+def test_scan_backend_total_labelled_separately():
+    # Frontend elapsed vs backend phase split are labelled distinctly;
+    # OCR is one phase, never the total.
+    assert "backend" in SCAN
+    assert "Processing:" in SCAN
+    assert 'data-testid="text-images-analyzed"' in SCAN
+
+
+def test_scan_vision_debug_diagnostics():
+    # Dev diagnostics: enabled state, model, calls, status, latency —
+    # never key material.
+    assert 'data-testid="text-vision-debug"' in SCAN
+    assert "Gemini: Enabled" in SCAN
+    assert "Model:" in SCAN
+    assert "Calls:" in SCAN
+    assert "Status:" in SCAN
+    assert "Latency:" in SCAN
+    assert "GEMINI_API_KEY" not in SCAN
+    assert "LEGALAKSHI_VISION_API_KEY" not in SCAN
+
+
+def test_scan_ingredients_ai_unavailable_message():
+    # When neither OCR nor AI reads ingredients, the officer is told
+    # plainly — never a fabricated list.
+    assert 'data-testid="ingredients-ai-unavailable"' in SCAN
+    assert "AI could not reliably extract ingredients" in SCAN

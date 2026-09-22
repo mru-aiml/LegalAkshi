@@ -582,7 +582,9 @@ def test_frontend_explicit_vision_messaging():
     scan = _scan()
     assert "Vision AI active — OCR and visual evidence are being reconciled" \
         in scan
-    assert "Vision AI unavailable — OCR-only extraction is being used" \
+    # Second-pass fallback wording: vision failure shows OCR results,
+    # never a failed inspection.
+    assert "AI verification unavailable — OCR results shown." \
         in scan
     assert "Vision AI partially unavailable — affected fields require " \
         "review" in scan

@@ -34,6 +34,8 @@ class MockVisionProvider:
             "requested_fields": list(requested_fields or []),
             "n_ocr_candidates": len(ocr_candidates or []),
             "has_layout": bool(layout_context),
+            "n_panels": len(image) if isinstance(image, (list, tuple))
+            else (0 if image is None else 1),
         })
         out: list[dict[str, Any]] = []
         for field in requested_fields or []:

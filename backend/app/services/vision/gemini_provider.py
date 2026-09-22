@@ -13,6 +13,7 @@ import io
 import json
 import logging
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -20,6 +21,11 @@ from app.services.vision.base import VisionError
 from app.services.vision.schemas import validate_vision_candidate
 
 log = logging.getLogger("legalakshi.vision.gemini")
+
+# Default model. Configurable via LEGALAKSHI_VISION_MODEL — never rely
+# on a hard-coded model elsewhere; the provider always reports the
+# effective model it was constructed with.
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 _FORBIDDEN_PHRASES = ("probably", "looks like", "likely ",
                       "maybe ", "possibly ")
@@ -30,7 +36,7 @@ class GeminiVisionProvider:
 
     def __init__(self, api_key: str = "", model: str = "") -> None:
         self._api_key = api_key or ""
-        self._model = model or "gemini-2.0-flash"
+        self._model = model or DEFAULT_MODEL
 
     @property
     def model(self) -> str:
@@ -90,20 +96,35 @@ class GeminiVisionProvider:
     ) -> list[dict[str, Any]]:
         if not self.available():
             raise VisionError("gemini provider not configured (key/model)")
-        if image is None:
+        # Single panel or several panels of the SAME package (front+back):
+        # every entry is an original colour photo, never a processed
+        # variant. Capped so one call cannot balloon into N uploads.
+        panels = list(image) if isinstance(image, (list, tuple)) else [image]
+        panels = [p for p in panels if p is not None][:8]
+        if not panels:
             raise VisionError("gemini provider received no image")
         prompt = self._prompt(requested_fields, ocr_candidates,
-                              layout_context)
+                              layout_context, n_panels=len(panels))
         try:
-            image_b64 = _image_to_jpeg_b64(image)
+            # Downscaled working copies (long edge <= 1600px): small
+            # MRP/batch/date stamps stay legible while upload bytes and
+            # model latency stay bounded. The ORIGINAL colour photographs
+            # are encoded — never thresholded/grayscale OCR variants —
+            # because logos, colours, the veg symbol and handwriting
+            # must stay visible.
+            parts: list[dict[str, Any]] = [{"text": prompt}]
+            for panel in panels:
+                image_b64 = _image_to_jpeg_b64(panel, max_dim=1600)
+                parts.append({"inline_data": {
+                    "mime_type": "image/jpeg", "data": image_b64}})
         except Exception as exc:
             raise VisionError(f"cannot encode image: {exc}")
-        body = {"contents": [{"parts": [
-            {"text": prompt},
-            {"inline_data": {"mime_type": "image/jpeg",
-                             "data": image_b64}},
-        ]}], "generationConfig": {"temperature": 0.0,
-                                  "responseMimeType": "application/json"}}
+        body = {"contents": [{"parts": parts}],
+                "generationConfig": {"temperature": 0.0,
+                                     "responseMimeType": "application/json",
+                                     # Bounded output: one compact object
+                                     # per requested field; caps latency.
+                                     "maxOutputTokens": 2048}}
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                f"{self._model}:generateContent")
         req = urllib.request.Request(
@@ -115,6 +136,17 @@ class GeminiVisionProvider:
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 payload = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            # Surface the REAL provider failure (status + body snippet)
+            # so timeouts/auth/model issues are diagnosable instead of
+            # collapsing into a bare fallback. Key material never
+            # appears here (key travels in the request header only).
+            try:
+                detail = exc.read().decode(errors="replace")[:400]
+            except Exception:
+                detail = ""
+            raise VisionError(
+                f"gemini HTTP {exc.code}: {detail or exc.msg}")
         except Exception as exc:
             raise VisionError(f"gemini request failed: {type(exc).__name__}")
         ms = round((time.perf_counter() - t0) * 1000, 1)
@@ -124,7 +156,8 @@ class GeminiVisionProvider:
 
     def _prompt(self, requested_fields: list[str],
                 ocr_candidates: list[dict[str, Any]] | None,
-                layout_context: dict[str, Any] | None) -> str:
+                layout_context: dict[str, Any] | None,
+                n_panels: int = 1) -> str:
         ocr_hint = ""
         if ocr_candidates:
             bits = [f"{c.get('field')}={c.get('value')}"
@@ -134,19 +167,57 @@ class GeminiVisionProvider:
         if layout_context:
             layout_hint = "Layout context: " + json.dumps(layout_context)[:800]
         fields = ", ".join(requested_fields or [])
+        panels_hint = ""
+        if n_panels > 1:
+            panels_hint = (
+                f"The {n_panels} attached images show different panels "
+                "of the SAME package (e.g. front, then back). A field "
+                "may appear on only one panel: report the panel in "
+                "evidence_location and never merge text across panels "
+                "into one value. ")
         return (
-            "You are an extraction component. Use the package image as "
-            "the primary visual evidence and OCR text as supporting "
-            "evidence. Extract only explicitly visible declarations. "
-            "Never infer or guess missing values. "
-            "Return ONLY a JSON array; each item must have keys "
-            "field, value (string or null), unit (string or null), "
-            "status (one of DETECTED, NEEDS_REVIEW, NOT_DETECTED), "
-            "confidence (0-1), evidence_text (exact visible text or null). "
-            "Rules: return DETECTED only when the value is clearly readable "
-            "with supporting visible text; otherwise NEEDS_REVIEW or "
-            "NOT_DETECTED with value null. Never guess, never use hedged "
-            f"language. Requested fields: {fields}. {ocr_hint} {layout_hint}"
+            "You are a visual extraction component for food-package "
+            "inspection. Use the package images as the primary visual "
+            "evidence and OCR text as supporting evidence only. Extract "
+            "ONLY information explicitly visible in the images. Never "
+            "infer, guess, calculate, or fill in missing values. If a "
+            "field is not visible or cannot be read confidently, return "
+            "value null with status NOT_VISIBLE or UNREADABLE — never "
+            "hallucinate. You NEVER judge legal compliance — only read "
+            "what is printed, stamped, or hand-written on the pack. "
+            "Return ONLY a JSON array with one object per requested "
+            "field. Each object must have exactly these keys: "
+            "field, value (string or null), status (one of FOUND, "
+            "NOT_VISIBLE, UNREADABLE, AMBIGUOUS), confidence (0-100), "
+            "evidence_location (where on the pack: front, back, label, "
+            "bottom, other — or null), reason (short explanation), "
+            "handwritten (true when the value is hand-written, "
+            "hand-stamped, or inkjet-printed, else false). "
+            "Small declaration block (read carefully, character by "
+            "character): MRP is the numeric price only — look for "
+            "\"MRP\", \"Maximum Retail Price\", \"Max Retail Price\", "
+            "\"Rs.\", \"Rs\": \"MRP Rs.: 460/-\" gives value \"460\". "
+            "Batch looks for \"Batch\", \"Batch No\", \"Lot\", \"Lot "
+            "No\". Dates look for \"MFD\", \"Mfg\", \"Manufactured\", "
+            "\"Date of Manufacturing\", \"Date of Packing\", \"PKD\" "
+            "(packing date), \"Expiry\", \"EXP\", \"Use By\", \"Best "
+            "Before\" (expiry/best-before). Preserve dates exactly as "
+            "printed. Keep batch number, packing/manufacturing date and "
+            "best-before/expiry strictly separate: a packing date is "
+            "NOT a manufacturing date and a \"Best Before 6 months\" "
+            "statement is NOT an expiry date (return the statement "
+            "text). Never take nutrition-table numbers, the FSSAI "
+            "licence number, barcodes, or customer-care/phone numbers "
+            "as MRP, batch, or date values. "
+            "Ingredients: locate the complete INGREDIENTS / INGREDIENTS "
+            "LIST section and transcribe its exact wording — never "
+            "summarise, never complete it from product knowledge, never "
+            "treat nutrition values as ingredients. "
+            "vegetarian_symbol value is one of VEGETARIAN, "
+            "NON_VEGETARIAN, NOT_DETECTED, AMBIGUOUS (green "
+            "square+circle vs brown/red mark). "
+            f"{panels_hint}"
+            f"Requested fields: {fields}. {ocr_hint} {layout_hint}"
         )
 
     def _parse(self, payload: dict[str, Any],
@@ -154,7 +225,8 @@ class GeminiVisionProvider:
         try:
             parts = payload["candidates"][0]["content"]["parts"]
             text = "".join(p.get("text", "") for p in parts)
-            items = json.loads(text)
+            items = _strip_code_fences(text)
+            items = json.loads(items)
         except Exception:
             # Unparseable model output: every requested field NEEDS_REVIEW.
             return [{"field": f, "value": None, "unit": None,
@@ -168,6 +240,7 @@ class GeminiVisionProvider:
         for raw in items if isinstance(items, list) else []:
             if not isinstance(raw, dict):
                 continue
+            raw = _normalize_item(raw)
             if any(p in str(raw.get("value", "")).lower()
                    for p in _FORBIDDEN_PHRASES):
                 raw = {**raw, "status": "NEEDS_REVIEW"}
@@ -175,6 +248,69 @@ class GeminiVisionProvider:
             if cand is not None:
                 out.append(cand)
         return out
+
+
+# Prototype response shape (STRICT JSON per field) -> internal schema.
+# Legacy shapes (status DETECTED/..., confidence 0-1, detail_status)
+# keep working: anything unrecognised falls through untouched and the
+# strict validator decides.
+_NEW_STATUS_TO_INTERNAL = {
+    "FOUND": "DETECTED",
+    "NOT_VISIBLE": "NOT_DETECTED",
+    "UNREADABLE": "NEEDS_REVIEW",
+    "AMBIGUOUS": "NEEDS_REVIEW",
+}
+
+# Spec field aliases -> internal candidate field names.
+_FIELD_ALIASES = {
+    "vegetarian_symbol": "veg_nonveg",
+    "veg_symbol": "veg_nonveg",
+}
+
+
+def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise one model item to the internal candidate schema."""
+    item = dict(raw)
+    field = str(item.get("field", "") or "").strip()
+    if field in _FIELD_ALIASES:
+        item["field"] = _FIELD_ALIASES[field]
+    status = str(item.get("status", "") or "").strip().upper()
+    if status in _NEW_STATUS_TO_INTERNAL:
+        item["status"] = _NEW_STATUS_TO_INTERNAL[status]
+        if status == "NOT_VISIBLE":
+            item["value"] = None
+    # Confidence may arrive 0-100 (spec) or 0-1 (legacy): normalise.
+    try:
+        conf = float(item.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    if conf > 1.0:
+        conf = conf / 100.0
+    item["confidence"] = max(0.0, min(1.0, conf))
+    # reason doubles as visible-text evidence when evidence_text absent.
+    if item.get("evidence_text") in (None, "") and item.get("reason"):
+        item["evidence_text"] = str(item["reason"])[:300]
+    if isinstance(item.get("handwritten"), str):
+        item["handwritten"] = item["handwritten"].strip().lower() in (
+            "true", "1", "yes", "handwritten")
+    return item
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove a single markdown code fence; unparseable stays unparseable.
+
+    Exactly one safeparse attempt is allowed (spec §14): fence-strip,
+    then json.loads. Anything else falls back to OCR via the caller.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines)
+    return stripped
 
 
 def _sanitize_health_error(exc: BaseException) -> str:
@@ -190,7 +326,7 @@ def _sanitize_health_error(exc: BaseException) -> str:
     return f"provider request failed ({name})"
 
 
-def _image_to_jpeg_b64(image: Any) -> str:
+def _image_to_jpeg_b64(image: Any, max_dim: int = 1600) -> str:
     from PIL import Image
 
     if hasattr(image, "tobytes") and hasattr(image, "shape"):
@@ -199,6 +335,13 @@ def _image_to_jpeg_b64(image: Any) -> str:
         img = Image.open(io.BytesIO(image)).convert("RGB")
     else:
         img = image.convert("RGB")
+    # Downscale-only: huge camera photos shrink (faster upload +
+    # inference); small label crops are never upscaled.
+    w, h = img.size
+    if max(w, h) > max_dim > 0:
+        scale = max_dim / max(w, h)
+        img = img.resize((max(1, int(w * scale)),
+                          max(1, int(h * scale))))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode()

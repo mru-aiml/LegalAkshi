@@ -41,7 +41,24 @@ class Settings(BaseSettings):
     LEGALAKSHI_VISION_PROVIDER: str = ""
     LEGALAKSHI_VISION_MODEL: str = ""
     LEGALAKSHI_VISION_API_KEY: str = ""
+    # Accepted fallback for the Gemini key (same secret, plain name).
+    # Resolution order: LEGALAKSHI_VISION_API_KEY, then GEMINI_API_KEY.
+    # Server-side only — never sent to, or readable by, the frontend.
+    GEMINI_API_KEY: str = ""
     LEGALAKSHI_VISION_ENABLED: bool = False
+    # OCR inspection pipeline (extraction only, never compliance).
+    # OCR_MAX_IMAGES caps TOTAL package images per inspection
+    # (front + back + extras; the listing screenshot is separate).
+    # OCR_TIMEOUT_SECONDS is the end-to-end extraction budget the
+    # frontend honors for up to OCR_MAX_IMAGES photos (sequential
+    # staged pipeline: one fast pass per image, then targeted crops).
+    OCR_MAX_IMAGES: int = 8
+    OCR_TIMEOUT_SECONDS: float = 420.0
+    # Vision second pass: consolidated single-call extraction first
+    # (one call, all wanted fields, one representative original photo),
+    # grouped region-crop calls only for fields still uncovered.
+    # False restores the legacy grouped-only plan.
+    LEGALAKSHI_VISION_CONSOLIDATED: bool = True
 
     @property
     def cors_origins(self) -> list[str]:

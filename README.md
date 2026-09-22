@@ -18,7 +18,7 @@ Consumers can independently verify products, access available nutrition informat
 
 | Item | Details |
 |---|---|
-| Problem statement ID | *TBD — add official SIH problem statement number* |
+| Problem statement ID | SIH26034 |
 | Problem statement title | *TBD — add official SIH problem statement title* |
 | Category | *TBD (e.g. Food Safety / Regulatory Tech)* |
 | Team | See [👥 Team](#-team) |
@@ -139,8 +139,10 @@ Complaint Tracking
 ### Image preprocessing
 
 - Pillow: RGB conversion, upscale-if-small, autocontrast (`backend/app/services/ocr/service.py`)
-- OpenCV (`backend/app/services/ocr/opencv_preprocessor.py`, optional and guarded): quality/sharpness/brightness/contrast scoring, orientation voting, deskew (≤12°), layout panels, variant ordering. `cv2` is exercised only where available; the service degrades gracefully without it.
+- OpenCV (`backend/app/services/ocr/opencv_preprocessor.py`, optional and guarded): quality/sharpness/brightness/contrast scoring, orientation voting, deskew (≤12°), layout panels, variant ordering. `cv2` is exercised only where available; the service degrades gracefully without it. Declared directly in `backend/requirements.txt` (`opencv-python>=4.8`); verify with `python -c "import cv2; print(cv2.__version__)"` from `backend/` (uses `.venv`).
+- Large photos are downscaled to 1280px (`STAGE1_MAX_DIM`) before OCR; the original colour bytes are always preserved for symbol detection.
 - EXIF/orientation handling, duplicate detection and image-role classification (`image_roles.py`: `FRONT` / `BACK` / `SIDE` / `TOP` / `BOTTOM` / `UNKNOWN` / `DUPLICATE`) with per-field image priority.
+- Up to **8 package images** per inspection (`OCR_MAX_IMAGES`); over-limit uploads are rejected with HTTP 422, never silently truncated. The OCR endpoint runs in a worker thread so the API stays responsive; the UI honors `OCR_TIMEOUT_SECONDS` (default 420s, see `VITE_OCR_TIMEOUT_MS`).
 
 ### OCR
 
@@ -150,12 +152,20 @@ Complaint Tracking
 
 ### Field extraction
 
-Deterministic, pattern-anchored extractors (`fields.py`, `food.py`) with confidence and coherence gates — values are never placeholders. Supported fields include product name, quantity/unit, MRP, dates, FSSAI (14-digit with licence context), manufacturer, consumer-care (phone/email), batch, ingredients, nutrition rows, and veg/non-veg symbol evidence (`veg_symbol.py`: colour-blob + geometry; ambiguous → `NEEDS_REVIEW`).
+Deterministic, pattern-anchored extractors (`fields.py`, `food.py`) with confidence and coherence gates — values are never placeholders. Supported fields include product name, quantity/unit, MRP, dates, FSSAI (14-digit with licence context), manufacturer, consumer-care (phone/email), batch, ingredients, nutrition rows, and veg/non-veg symbol evidence (`veg_symbol.py`: HSV hue gates + re-located square-border/centre-disc geometry; amber/yellow packs stay `UNKNOWN`, ambiguous → `NEEDS_REVIEW`).
 
-### AI Vision
+### AI Vision (second-pass extraction)
 
-- Providers (`backend/app/services/vision/`): `gemini` (REST `generateContent`, stdlib `urllib`, server-side key) and `mock` (deterministic scripted candidates for tests). Resolved via `provider.py`; grouped, bounded calls (max calls per inspection, per-call timeout, per-inspection cache).
-- Vision is an **assistive candidate-generation/reconciliation layer** for unresolved or high-value fields (groups A–F on cropped regions with OCR+layout context). It never decides compliance, never silently overrides OCR — conflicts and uncertain values become `NEEDS_REVIEW`, and failure falls back to the OCR-only flow.
+- Providers (`backend/app/services/vision/`): `gemini` (default model `gemini-3.8-flash`, configurable via `LEGALAKSHI_VISION_MODEL`; REST `generateContent`, stdlib `urllib`, server-side key) and `mock` (deterministic scripted candidates for tests). Resolved via `provider.py` (key: `LEGALAKSHI_VISION_API_KEY`, fallback `GEMINI_API_KEY`; never exposed); bounded calls (max 6 per inspection, 30s per call, 100s overall, per-inspection cache).
+- **Consolidated-first plan** (`LEGALAKSHI_VISION_CONSOLIDATED=true`): one call with all wanted fields on ALL selected original photos in a single multimodal request (deduped, ≤1600px JPEG, capped JSON output); ONE targeted second call covers still-missing MRP/batch/date/expiry/ingredients on the same images; grouped region-crop calls cover only fields still without a usable value. Identical image bytes are never resent after a failure/timeout. Failure degrades to OCR-only with `AI verification unavailable — OCR results shown.` — never a failed inspection. Provider HTTP errors (status + body snippet) are logged and surfaced sanitised, never swallowed.
+- Vision is an **assistive candidate-generation/reconciliation layer** for unresolved or high-value fields. It never decides compliance, never silently overrides OCR — conflicts and uncertain values become `NEEDS_REVIEW`, and failure falls back to the OCR-only flow.
+- Gemini reports per-field `detail_status` (`FOUND` / `NOT_VISIBLE` / `UNREADABLE` / `AMBIGUOUS`), `evidence_location`, and `handwritten` flags (MRP/batch/dates are often hand-stamped); vegetarian_symbol uses `VEGETARIAN` / `NON_VEGETARIAN` / `NOT_DETECTED` / `AMBIGUOUS`.
+- Second-pass verdicts per field: `AI_VERIFIED` (agree) / `CONFLICT` (disagree, both kept) / `AI_EXTRACTED` (OCR blank, review required) / `OCR_ONLY` / `NOT_DETECTED`. Nothing is ever invented.
+- Symbol matrix (`symbol_verification`): OpenCV × Gemini → `AI_CV_VERIFIED` / `AI_EXTRACTED_REVIEW` / `CONFLICT_REVIEW` (never auto-resolved) / `CV_ONLY` / `NOT_DETECTED`.
+
+### End-to-end timing
+
+- The OCR endpoint returns a `timing` envelope with backend phase clocks: `ocr_ms`, `preprocessing_ms`, `ai_verification_ms`, `reconciliation_ms`, `total_backend_ms` (structured per-phase logs included). The UI displays `Inspection completed in XX.Xs (OCR: … · AI verification: … · Processing: …)` from its own click-to-result clock — OCR duration is one phase, never the total.
 
 ## 🔍 Package Intelligence
 
@@ -404,11 +414,14 @@ Backend (`backend/.env.example`):
 | `LEGALAKSHI_TESSERACT_CMD` | Absolute path to Tesseract 5 binary (empty = pure-RapidOCR). Example: `C:\Program Files\Tesseract-OCR\tesseract.exe` |
 | `DEV_AUTH_ROLE` | Local-dev fixed role (`consumer`/`officer`/`admin`); never set in shared deployments |
 | `LEGALAKSHI_VISION_PROVIDER` | `""` / `mock` / `gemini` (empty = disabled) |
-| `LEGALAKSHI_VISION_MODEL` | e.g. `gemini-2.0-flash` |
+| `LEGALAKSHI_VISION_MODEL` | e.g. `gemini-3.8-flash` (the provider default; `gemini-2.0-flash` is shut down — do not use) |
 | `LEGALAKSHI_VISION_API_KEY` | Server-side only; never logged or exposed (use a placeholder, never a real key) |
 | `LEGALAKSHI_VISION_ENABLED` | `false` by default — vision is opt-in |
+| `LEGALAKSHI_VISION_CONSOLIDATED` | `true` = consolidated single Gemini call first, grouped crops only for uncovered fields |
+| `OCR_MAX_IMAGES` | Total package images per inspection, default `8` (front + back + extras; listing screenshot is separate; over-limit → HTTP 422) |
+| `OCR_TIMEOUT_SECONDS` | End-to-end extraction budget in seconds, default `420` (honored by the Scan & Inspect UI) |
 
-Frontend (`artifacts/nutricheck/.env.example`): `VITE_CLERK_PUBLISHABLE_KEY`, `VITE_API_URL` (default `http://localhost:8000`), `PORT` (default `5174`), `BASE_PATH` (default `/`).
+Frontend (`artifacts/nutricheck/.env.example`): `VITE_CLERK_PUBLISHABLE_KEY`, `VITE_API_URL` (default `http://localhost:8000`), `PORT` (default `5174`), `BASE_PATH` (default `/`), `VITE_OCR_TIMEOUT_MS` (default `420000`, must stay ≥ `OCR_TIMEOUT_SECONDS` × 1000).
 
 ## ▶️ Running the Project
 
@@ -435,7 +448,7 @@ python -m pytest tests -q
 $env:DATABASE_URL="postgresql://..."; python -m pytest tests/test_postgres_integration.py -q
 ```
 
-Categories: engine, API, RBAC (incl. real RS256 round-trip), OCR, OpenCV preprocessor, package intelligence + vision integration, extraction stages, inspector/complaint/consumer/suggestion/notification/report workflows, rule sync, schema/static contracts, performance and scan benchmarks. The PostgreSQL integration file **skips** (never fake-passes) when no database is reachable. No fixed test count is claimed here — run the suite for the current number.
+Categories: engine, API, RBAC (incl. real RS256 round-trip), OCR, OpenCV preprocessor, 8-image limits + symbol detector (`tests/test_scan_limits_symbol.py`), package intelligence + vision integration, extraction stages, inspector/complaint/consumer/suggestion/notification/report workflows, rule sync, schema/static contracts, performance and scan benchmarks. The PostgreSQL integration file **skips** (never fake-passes) when no database is reachable. No fixed test count is claimed here — run the suite for the current number.
 
 ## 📊 Current Status
 

@@ -146,11 +146,45 @@ phones, batch, manufacturer, origin, unit price), and the service layer
   authenticated users) returns raw text + structured fields with
   `{value, provenance: "OCR", confidence}`; failures yield
   `status: NEEDS_REVIEW` with null fields instead of crashing.
+  Up to `OCR_MAX_IMAGES` (default 8) package photos per inspection
+  (listing screenshot excluded); over-limit uploads get 422, never a
+  silent drop. Large photos are downscaled to 1280px before OCR;
+  the endpoint runs the pipeline in a worker thread, and the UI
+  honors `OCR_TIMEOUT_SECONDS` (default 420s).
+- Veg/non-veg symbol (`app/services/ocr/veg_symbol.py`): visual HSV +
+  square-border/centre-disc geometry on the ORIGINAL colour image
+  (never OCR text, never thresholded grays). Amber/yellow packs stay
+  UNKNOWN; UNKNOWN is never a non-compliance signal.
 - Review flow: `field_meta` on product creation records per-field provenance
   (unedited OCR fields keep engine+confidence, incl. mirror rows for
   manufacturer/quantity/dates — no schema change);   edited fields are
   `manual-entry` with NULL confidence. The rule engine receives exactly the
   final reviewed declaration.
+- Timing envelope: every extract response carries `timing`
+  (`ocr_ms`, `preprocessing_ms`, `ai_verification_ms`,
+  `reconciliation_ms`, `total_backend_ms`) plus per-phase server logs.
+
+## Vision second pass (Gemini, optional)
+
+Extraction only — never compliance (the rule engine is untouched).
+Default model `gemini-3.8-flash` (configurable via
+`LEGALAKSHI_VISION_MODEL`; key via `LEGALAKSHI_VISION_API_KEY` with
+`GEMINI_API_KEY` fallback — server-side only, status endpoints report
+presence booleans, never the key); budgets 30s/call, 100s overall, max 6
+calls/inspection. Consolidated-first (`LEGALAKSHI_VISION_CONSOLIDATED`,
+default true): one call with all wanted fields on ALL selected
+original photos in a single multimodal request (deduped, ≤1600px JPEG,
+capped JSON); ONE targeted second call re-asks only still-missing
+MRP/batch/packing/expiry/best-before/ingredients on the same images;
+grouped region crops cover only fields still without a usable value.
+Provider HTTP failures surface status + body snippet (sanitised) in
+logs and `vision_error` instead of a bare fallback.
+Per-field verdicts `AI_VERIFIED` / `CONFLICT` / `AI_EXTRACTED` /
+`OCR_ONLY` / `NOT_DETECTED`, symbol matrix `AI_CV_VERIFIED` /
+`AI_EXTRACTED_REVIEW` / `CONFLICT_REVIEW` / `CV_ONLY` /
+`NOT_DETECTED`, and Gemini reports `detail_status`,
+`evidence_location`, `handwritten`. Any failure → OCR-only with
+`AI verification unavailable — OCR results shown.`
 
 ## Notifications (migration 003)
 

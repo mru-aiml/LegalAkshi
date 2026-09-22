@@ -73,7 +73,13 @@ from app.services.ocr.fields import (
 log = logging.getLogger("legalakshi.ocr")
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_IMAGES = 6
+# Default cap on TOTAL package images per inspection (front + back +
+# extras; the listing screenshot is a separate slot). The effective
+# limit comes from settings (OCR_MAX_IMAGES, default 8) via
+# _max_images(); this constant is only the fallback when settings are
+# unavailable (never import settings at module top level: keep this
+# module importable without a configured environment).
+DEFAULT_MAX_IMAGES = 8
 # Stage-1 working size: big enough to read normal print, small enough that
 # a single detector pass finishes in seconds on CPU.
 STAGE1_MAX_DIM = 1280
@@ -104,6 +110,21 @@ REQUIRED_FIELDS = ("quantity", "mrp", "manufacturing_date")
 # unless explicitly configured (production route enables it per request);
 # unit tests never touch it, so legacy behaviour is byte-identical there.
 _tess_provider_default: Any | None = None
+
+
+def _max_images() -> int:
+    """Effective per-inspection package-image cap (OCR_MAX_IMAGES)."""
+    try:
+        from app.core.config import get_settings
+
+        return max(1, int(get_settings().OCR_MAX_IMAGES or
+                          DEFAULT_MAX_IMAGES))
+    except Exception:
+        return DEFAULT_MAX_IMAGES
+
+
+# Back-compat alias: older code/tests import MAX_IMAGES directly.
+MAX_IMAGES = DEFAULT_MAX_IMAGES
 
 
 def configure_tesseract_fallback(provider: Any | None) -> None:
@@ -1609,8 +1630,16 @@ def extract_label_multi(images: list[tuple[bytes | None, str]] | None,
     tess_provider = _resolve_tess_provider(tess_provider)
     supplied = [(raw, label or f"image_{i}")
                 for i, (raw, label) in enumerate(images or []) if raw]
-    if len(supplied) > MAX_IMAGES:
-        supplied = supplied[:MAX_IMAGES]
+    max_images = _max_images()
+    if len(supplied) > max_images:
+        # Explicit rejection, never silent truncation: the inspector
+        # must know a photo was dropped. The route maps this to 422.
+        from app.services.ocr.base import TooManyImagesError
+
+        raise TooManyImagesError(
+            f"at most {max_images} package images per inspection "
+            f"(OCR_MAX_IMAGES); got {len(supplied)}. Remove "
+            f"{len(supplied) - max_images} photo(s) and retry.")
 
     image_results: list[dict[str, Any]] = []
     all_lines: list[OcrLine] = []

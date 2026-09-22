@@ -29,6 +29,15 @@ class OcrError(Exception):
     """Provider failure (missing dependency, corrupt image, model error)."""
 
 
+class TooManyImagesError(OcrError):
+    """Inspection supplies more package images than OCR_MAX_IMAGES.
+
+    Subclasses OcrError so legacy callers still see a provider-layer
+    failure; the FastAPI route maps it to 422 (caller error) instead
+    of 502, and the message always states the configured limit.
+    """
+
+
 class OCRProvider(Protocol):
     name: str
 
