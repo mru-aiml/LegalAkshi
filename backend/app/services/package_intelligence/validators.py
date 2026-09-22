@@ -68,7 +68,7 @@ _QTY_COUNT_CTX = re.compile(
 # declaration (which carries Batch/Lot context validated elsewhere).
 _BATCH_STOP = frozenset(
     {"no", "na", "n/a", "nil", "none", "-", "--", "null", "nr", "nil.",
-     "net", "not", "new", "pack", "lot"})
+     "net", "not", "new", "pack", "lot", "number", "numbers", "batch"})
 # Fatal inside an ingredient VALUE even beside a heading (region
 # boundary is wrong, not the wording).
 _ING_VALUE_FATAL = re.compile(

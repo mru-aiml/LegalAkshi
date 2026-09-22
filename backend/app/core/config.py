@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # LEGALAKSHI_VISION_ENABLED=false by default: OCR-only flow continues.
     LEGALAKSHI_VISION_PROVIDER: str = ""
     LEGALAKSHI_VISION_MODEL: str = ""
+    # Plain alias for the model name. Resolution order: GEMINI_MODEL,
+    # then LEGALAKSHI_VISION_MODEL, then the provider default. No other
+    # model is ever silently substituted (spec §1).
+    GEMINI_MODEL: str = ""
     LEGALAKSHI_VISION_API_KEY: str = ""
     # Accepted fallback for the Gemini key (same secret, plain name).
     # Resolution order: LEGALAKSHI_VISION_API_KEY, then GEMINI_API_KEY.

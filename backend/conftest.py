@@ -28,6 +28,7 @@ def _test_identity_mode(monkeypatch):
     for var in ("CLERK_JWKS_URL", "CLERK_AUDIENCE", "DEV_AUTH_ROLE",
                 "LEGALAKSHI_TESSERACT_CMD", "LEGALAKSHI_VISION_PROVIDER",
                 "LEGALAKSHI_VISION_MODEL", "LEGALAKSHI_VISION_API_KEY",
+                "GEMINI_API_KEY", "GEMINI_MODEL",
                 "LEGALAKSHI_VISION_ENABLED", "OCR_MAX_IMAGES",
                 "OCR_TIMEOUT_SECONDS", "LEGALAKSHI_VISION_CONSOLIDATED"):
         monkeypatch.delenv(var, raising=False)

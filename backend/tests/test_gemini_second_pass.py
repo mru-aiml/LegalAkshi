@@ -112,11 +112,11 @@ def test_2_gemini_timeout_falls_back_to_ocr_only():
     vision = out.get("vision") or {}
     assert vision.get("vision_status") == "unavailable"
     assert "timed out" in str(vision.get("vision_error") or "")
-    # Same bytes are never resent after a timeout: follow-up groups
-    # record a skip instead of burning another call budget.
+    # Free-tier guard: after the hard timeout, NO further AI calls burn
+    # budget — follow-up groups record a halt skip instead of resends.
     groups = vision.get("groups") or {}
     assert "consolidated" in groups
-    assert any("already failed" in str(rep.get("error") or "")
+    assert any("AI halted" in str(rep.get("error") or "")
                for name, rep in groups.items() if name != "consolidated")
     # OCR pipeline still completed normally.
     assert out["fields_detailed"]["mrp"]["value"] == "108"

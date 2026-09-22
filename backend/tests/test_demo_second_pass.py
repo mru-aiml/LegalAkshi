@@ -45,8 +45,8 @@ def _gemini_payload(items: list[dict]) -> dict:
         {"text": json.dumps(items)}]}}]}
 
 
-def _new_shape(field, value, conf=90, **kw):
-    item = {"field": field, "value": value, "status": "FOUND",
+def _new_shape(field, value, conf=90, status="FOUND", **kw):
+    item = {"field": field, "value": value, "status": status,
             "confidence": conf, "evidence_location": "back",
             "reason": f"visible {field}", "handwritten": False}
     item.update(kw)
@@ -291,3 +291,179 @@ def test_demo_conflict_preserves_both_sides():
     assert hit["verdict"] == "CONFLICT"
     assert hit["final_value"] is None
     assert {c["value"] for c in hit["candidates"]} == {"460", "480"}
+
+
+# ------------------------------------------------- request shape ---
+def test_demo_generation_config_only_supported_params(monkeypatch):
+    """Live-probed guard: generateContent rejects thinking_level and
+    the deprecated knobs (temperature, top_p, top_k, ...)."""
+    import io as _io
+    import json as _json
+    import urllib.request as _urlreq
+
+    import app.services.vision.gemini_provider as gem_mod
+
+    seen: dict = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return _json.dumps({"candidates": [{"content": {
+                "parts": [{"text": _json.dumps([
+                    {"field": "mrp", "value": "460",
+                     "status": "FOUND", "confidence": 95,
+                     "evidence_location": "back",
+                     "reason": "MRP Rs.: 460/-",
+                     "handwritten": True}])}]}}]}).encode()
+
+    def _fake_urlopen(req, timeout=None):
+        seen["body"] = _json.loads(req.data.decode())
+        seen["url"] = req.full_url
+        return _Resp()
+
+    monkeypatch.setattr(_urlreq, "urlopen", _fake_urlopen)
+    prov = gem_mod.GeminiVisionProvider(api_key="k", model="m")
+    out = prov.extract_package_fields(
+        _png_bytes("body"), ["mrp"], None, None)
+    gen = seen["body"]["contents"][0]["parts"][0]
+    assert isinstance(gen, dict) and "text" in gen
+    config = seen["body"]["generationConfig"]
+    for banned in ("temperature", "top_p", "top_k", "candidate_count",
+                   "thinking_budget", "thinking_level"):
+        assert banned not in config, banned
+    assert config.get("responseMimeType") == "application/json"
+    assert out[0]["value"] == "460"
+    assert out[0]["modality"] == "AI_HANDWRITTEN"
+
+
+# ------------------------------------------------- dates ---
+def test_demo_manufacturing_date_extraction():
+    rec = _overlay([_new_shape("manufacturing_date", "05/2024", 90,
+                               reason="MFD 05/2024")])
+    hit = rec["fields"]["manufacturing_date"]
+    assert hit["verdict"] == "AI_EXTRACTED"
+    assert hit["final_value"] == "05/2024"
+
+
+def test_demo_stamped_batch_preserved_verbatim():
+    rec = _overlay([_new_shape("batch_lot", "B24C11", 87,
+                               handwritten=True,
+                               reason="Stamped: B.No. B24C11")])
+    hit = rec["fields"]["batch_lot"]
+    assert hit["verdict"] == "AI_EXTRACTED"
+    assert hit["final_value"] == "B24C11"
+
+
+def test_demo_batch_rejects_fssai_phone_barcode():
+    from app.services.package_intelligence.validators import (
+        validate_batch_candidate,
+    )
+
+    assert validate_batch_candidate(
+        "21526079003978", evidence="FSSAI")[0] is False
+    assert validate_batch_candidate(
+        "9890240514", evidence="Customer care")[0] is False
+    assert validate_batch_candidate(
+        "SUN12", evidence="Batch No.: SUN12")[0] is True
+
+
+# ------------------------------------------------- statuses ---
+def test_demo_unreadable_missing_ambiguous_map_safely():
+    prov = GeminiVisionProvider(api_key="k", model="m")
+    out = prov._parse(_gemini_payload([
+        _new_shape("mrp", "46?", 35, status="UNREADABLE"),
+        _new_shape("batch_lot", None, 0, status="NOT_VISIBLE"),
+        _new_shape("manufacturing_date", "08/26 or 08/28", 45,
+                   status="AMBIGUOUS"),
+    ]), ["mrp", "batch_lot", "manufacturing_date"])
+    by_field = {c["field"]: c for c in out}
+    assert by_field["mrp"]["status"] == "NEEDS_REVIEW"
+    assert by_field["mrp"]["value"] == "46?"
+    assert by_field["batch_lot"]["status"] == "NOT_DETECTED"
+    assert by_field["batch_lot"]["value"] is None
+    assert by_field["manufacturing_date"]["status"] == "NEEDS_REVIEW"
+
+
+def test_demo_evidence_location_required_and_preserved():
+    prov = GeminiVisionProvider(api_key="k", model="m")
+    out = prov._parse(_gemini_payload([
+        _new_shape("mrp", "460", 95,
+                   evidence_location="back image, lower-right "
+                   "declaration block, next to MRP")]),
+        ["mrp"])
+    assert out[0]["evidence_location"] == \
+        "back image, lower-right declaration block, next to MRP"
+    assert out[0]["modality"] == "AI_HANDWRITTEN" or \
+        out[0]["modality"] in ("AI", "AI_PRINTED")
+
+
+def test_demo_modality_labels():
+    prov = GeminiVisionProvider(api_key="k", model="m")
+    out = prov._parse(_gemini_payload([
+        _new_shape("mrp", "460", 95, handwritten=True),
+        _new_shape("product_name", "Oil", 99, handwritten=False),
+    ]), ["mrp", "product_name"])
+    by_field = {c["field"]: c for c in out}
+    assert by_field["mrp"]["modality"] == "AI_HANDWRITTEN"
+    assert by_field["product_name"]["modality"] == "AI_PRINTED"
+
+
+# ------------------------------------------------- quota halt ---
+class _HttpFail:
+    name = "httpfail"
+    model = "httpfail-1"
+
+    def __init__(self, code):
+        self.code = code
+        self.calls = 0
+
+    def extract_package_fields(self, image, fields, ocr_candidates=None,
+                               layout_context=None):
+        from app.services.vision.base import VisionError
+
+        self.calls += 1
+        raise VisionError(f"gemini HTTP {self.code}: overloaded")
+
+
+def _halt_run(code):
+    from app.services.package_intelligence import vision_stage as vs
+
+    prov = _HttpFail(code)
+    t0 = __import__("time").perf_counter()
+    out = vs.enhance_ocr_with_vision(
+        _ocr_result(), [(_png_bytes("front"), "front"),
+                        (_png_bytes("back"), "back")], None,
+        inspection_id=f"demo-halt-{code}", provider=prov)
+    wall = __import__("time").perf_counter() - t0
+    return out, prov, wall
+
+
+def test_demo_429_halts_without_budget_burn():
+    out, prov, wall = _halt_run(429)
+    vision = out.get("vision") or {}
+    assert vision.get("vision_status") == "unavailable"
+    assert "429" in str(vision.get("vision_error") or "")
+    # Exactly ONE attempt — no retry loop, no 6-call burn.
+    assert prov.calls == 1
+    assert vision.get("vision_calls", 0) == 0
+    assert wall < 5.0
+    groups = vision.get("groups") or {}
+    assert any("AI halted" in str(rep.get("error") or "")
+               for rep in groups.values())
+    # Deterministic OCR layer untouched by the AI failure.
+    assert out.get("status") == "OK"
+
+
+def test_demo_503_halts_without_budget_burn():
+    out, prov, wall = _halt_run(503)
+    vision = out.get("vision") or {}
+    assert vision.get("vision_status") == "unavailable"
+    assert "503" in str(vision.get("vision_error") or "")
+    assert prov.calls == 1
+    # OCR result still complete and usable for manual review.
+    assert out.get("status") == "OK"

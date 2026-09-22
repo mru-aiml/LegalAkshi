@@ -94,6 +94,9 @@ def validate_vision_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
     bbox = raw.get("bbox")
     if bbox is not None and not isinstance(bbox, dict):
         return None
+    modality = raw.get("modality")
+    if modality not in ("AI", "AI_HANDWRITTEN", "AI_PRINTED"):
+        modality = None
     return {
         "field": field,
         "value": value,
@@ -111,6 +114,7 @@ def validate_vision_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
         "evidence_location": raw.get("evidence_location"),
         "source_location": raw.get("source_location"),
         "handwritten": bool(raw.get("handwritten", False)),
+        "modality": modality,
     }
 
 

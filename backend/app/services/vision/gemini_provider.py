@@ -60,8 +60,7 @@ class GeminiVisionProvider:
                     "(key/model)"}
         body = {"contents": [{"parts": [
             {"text": "Reply with exactly: OK"}]}],
-            "generationConfig": {"temperature": 0.0,
-                                 "maxOutputTokens": 8}}
+            "generationConfig": {"maxOutputTokens": 8}}
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                f"{self._model}:generateContent")
         req = urllib.request.Request(
@@ -120,10 +119,15 @@ class GeminiVisionProvider:
         except Exception as exc:
             raise VisionError(f"cannot encode image: {exc}")
         body = {"contents": [{"parts": parts}],
-                "generationConfig": {"temperature": 0.0,
-                                     "responseMimeType": "application/json",
-                                     # Bounded output: one compact object
-                                     # per requested field; caps latency.
+                # generateContent parameters that the live API accepts:
+                # capped structured JSON output. NOTE (live-probed):
+                # `thinking_level` is REJECTED by generateContent
+                # ("Unknown name at 'generation_config'") and must NOT
+                # be sent; low-reasoning behavior comes from the prompt
+                # (verbatim extraction, no inference). Deprecated knobs
+                # (temperature, top_p, top_k, candidate_count,
+                # thinking_budget) are never sent either.
+                "generationConfig": {"responseMimeType": "application/json",
                                      "maxOutputTokens": 2048}}
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                f"{self._model}:generateContent")
@@ -175,48 +179,145 @@ class GeminiVisionProvider:
                 "may appear on only one panel: report the panel in "
                 "evidence_location and never merge text across panels "
                 "into one value. ")
+        declaration_focus = ""
+        if layout_context and layout_context.get("pass") == \
+                "targeted-second":
+            declaration_focus = (
+                "DECLARATION SECOND PASS: ignore values from unrelated "
+                "package regions unless they are needed to establish "
+                "the identity of the declaration block. Search the "
+                "entire supplied image set before returning "
+                "NOT_VISIBLE. Pay special attention to small printed, "
+                "stamped, embossed, and handwritten declaration text. "
+                "Never use FSSAI licence numbers, telephone numbers, "
+                "barcodes, nutrition values, serving sizes, or "
+                "addresses as substitutes for declaration values. ")
         return (
-            "You are a visual extraction component for food-package "
-            "inspection. Use the package images as the primary visual "
-            "evidence and OCR text as supporting evidence only. Extract "
-            "ONLY information explicitly visible in the images. Never "
-            "infer, guess, calculate, or fill in missing values. If a "
-            "field is not visible or cannot be read confidently, return "
-            "value null with status NOT_VISIBLE or UNREADABLE — never "
-            "hallucinate. You NEVER judge legal compliance — only read "
-            "what is printed, stamped, or hand-written on the pack. "
-            "Return ONLY a JSON array with one object per requested "
-            "field. Each object must have exactly these keys: "
-            "field, value (string or null), status (one of FOUND, "
-            "NOT_VISIBLE, UNREADABLE, AMBIGUOUS), confidence (0-100), "
-            "evidence_location (where on the pack: front, back, label, "
-            "bottom, other — or null), reason (short explanation), "
-            "handwritten (true when the value is hand-written, "
-            "hand-stamped, or inkjet-printed, else false). "
-            "Small declaration block (read carefully, character by "
-            "character): MRP is the numeric price only — look for "
-            "\"MRP\", \"Maximum Retail Price\", \"Max Retail Price\", "
-            "\"Rs.\", \"Rs\": \"MRP Rs.: 460/-\" gives value \"460\". "
-            "Batch looks for \"Batch\", \"Batch No\", \"Lot\", \"Lot "
-            "No\". Dates look for \"MFD\", \"Mfg\", \"Manufactured\", "
-            "\"Date of Manufacturing\", \"Date of Packing\", \"PKD\" "
-            "(packing date), \"Expiry\", \"EXP\", \"Use By\", \"Best "
-            "Before\" (expiry/best-before). Preserve dates exactly as "
-            "printed. Keep batch number, packing/manufacturing date and "
-            "best-before/expiry strictly separate: a packing date is "
-            "NOT a manufacturing date and a \"Best Before 6 months\" "
-            "statement is NOT an expiry date (return the statement "
-            "text). Never take nutrition-table numbers, the FSSAI "
-            "licence number, barcodes, or customer-care/phone numbers "
-            "as MRP, batch, or date values. "
-            "Ingredients: locate the complete INGREDIENTS / INGREDIENTS "
-            "LIST section and transcribe its exact wording — never "
-            "summarise, never complete it from product knowledge, never "
-            "treat nutrition values as ingredients. "
-            "vegetarian_symbol value is one of VEGETARIAN, "
-            "NON_VEGETARIAN, NOT_DETECTED, AMBIGUOUS (green "
-            "square+circle vs brown/red mark). "
-            f"{panels_hint}"
+            "You are performing AI-assisted OCR on an Indian packaged "
+            "food product. Your primary task is VERBATIM VISUAL TEXT "
+            "EXTRACTION. You are NOT performing legal compliance "
+            "analysis. You are NOT deciding whether the package is "
+            "legally compliant. You are NOT allowed to invent, infer, "
+            "reconstruct, autocomplete, normalize, or guess text that "
+            "is not visibly supported by the supplied images. "
+            "For every requested field: "
+            "1. Inspect ALL supplied package images. "
+            "2. Search every image for the field. "
+            "3. Prioritize the package's declaration/information block. "
+            "4. Read printed, stamped, embossed, and handwritten text. "
+            "5. Preserve the exact visible characters. "
+            "6. Preserve the visible number/date formatting when "
+            "readable. "
+            "7. Never copy a value from an unrelated part of the "
+            "package. "
+            "8. Never substitute a similar-looking number from another "
+            "field. "
+            "9. Never infer a missing digit. "
+            "10. Never use general knowledge to complete a partially "
+            "visible value. "
+            "11. If the field is visible but unclear, return "
+            "UNREADABLE. "
+            "12. If multiple conflicting values are visible, return "
+            "AMBIGUOUS and report all relevant evidence. "
+            "13. If the field cannot be found, return NOT_VISIBLE. "
+            "14. Every extracted value must include evidence_location. "
+            "15. Every extracted value must include confidence. "
+            "16. Handwritten/stamped values must be explicitly marked "
+            "handwritten=true when applicable. "
+            "CRITICAL RULE: a wrong value is worse than a missing "
+            "value. If you cannot clearly read a character, DO NOT "
+            "GUESS IT. "
+            "DECLARATION BLOCK — HIGHEST PRIORITY. Search specifically "
+            "for the declaration/price/date block. Look for MRP (MRP, "
+            "Maximum Retail Price, Max Retail Price, Rs., Rs, M.R.P., "
+            "Retail Price, MRP inclusive), BATCH (Batch, Batch No., "
+            "Batch Number, Batch/Lot, Lot, Lot No., Lot Number, LOT), "
+            "MANUFACTURING / PACKING "
+            "(MFD, MFG, Mfg., Manufactured, Manufacturing Date, Date "
+            "of Manufacture, PKD, Pkd., Packed, Packed On, Packing "
+            "Date, Date of Packing), EXPIRY (EXP, Exp., Expiry, Expires, "
+            "Expiry Date, Date of Expiry), BEST BEFORE (Best Before, "
+            "Best Before X Months/Days/Years, Use Before, BB). The "
+            "label and the value are separate: return only the value "
+            "belonging to the label, never the label words themselves "
+            "(a lone \"Number\" is not a batch number). Do NOT confuse: FSSAI "
+            "licence number with batch number; customer care or phone "
+            "numbers with MRP; phone number with batch number; "
+            "nutrition values with MRP; serving size with quantity; net "
+            "quantity with serving size; best-before duration with "
+            "expiry date; manufacturing address with manufacturer name; "
+            "product code with batch number; barcode digits with batch "
+            "number; GST/tax numbers with batch number; licence numbers "
+            "with batch number; nutritional table numbers with MRP; "
+            "dates in unrelated promotional text with "
+            "manufacturing/expiry dates. "
+            "MRP EXTRACTION RULE: MRP must come from the price "
+            "declaration (MRP, Rs, Maximum Retail Price). Do not "
+            "interpret nutritional values, serving size, FSSAI number, "
+            "telephone number, barcode, or product code as MRP. If MRP "
+            "is handwritten or stamped, preserve it exactly as visible, "
+            "mark handwritten=true, return evidence_location and "
+            "confidence, and do not convert uncertain characters into "
+            "a different number. If it visibly appears to be Rs.46O "
+            "where the final character cannot confidently be "
+            "distinguished between 0 and O, return the visible "
+            "representation and mark the field UNREADABLE or AMBIGUOUS "
+            "rather than silently changing it. "
+            "BATCH / LOT EXTRACTION RULE: search specifically for "
+            "Batch, Batch No., Batch Number, Lot, Lot No. Do not use "
+            "FSSAI licence, phone number, barcode, product code, or "
+            "nutrition values as batch number. Batch may be printed, "
+            "stamped, embossed, or handwritten — preserve exact visible "
+            "characters. "
+            "PACKING / MANUFACTURING DATE: search specifically for MFD, "
+            "MFG, PKD, Manufactured, Packed, Packed On, Date of "
+            "Manufacture, Date of Packing. If a date is visible but its "
+            "label cannot be established, do not automatically classify "
+            "it as MFD/PKD — return AMBIGUOUS if the evidence does not "
+            "establish the field. Preserve the visible date. "
+            "EXPIRY DATE: search specifically for EXP, Expiry, Expires, "
+            "Date of Expiry. Do NOT convert a \"Best Before 6 Months\" "
+            "statement into an expiry date unless an explicit expiry "
+            "date is visibly printed. If only \"Best Before 6 Months\" "
+            "is visible: best_before holds that statement and "
+            "expiry_date is NOT_VISIBLE. Do not calculate an expiry "
+            "date. "
+            "INGREDIENTS (HIGH PRIORITY): find the section explicitly "
+            "labelled INGREDIENTS or equivalent declaration. Extract "
+            "the visible ingredient list VERBATIM. Do NOT summarize, "
+            "paraphrase, clean away meaningful text, invent missing "
+            "ingredients, infer ingredients from product type, use "
+            "general knowledge, or replace visible terms with "
+            "standardized names. Preserve ingredient names, "
+            "percentages, parentheses, additives, INS numbers, colours, "
+            "flavour names, separators, and visible qualifiers. If part "
+            "of the ingredients block is unreadable, return only the "
+            "clearly visible text and mark the extraction partial or "
+            "UNREADABLE. Do not fabricate the missing portion. Do not "
+            "mix ingredients with directions for use, dosage, "
+            "nutrition information, marketing claims, warnings, "
+            "storage instructions, or manufacturer information. "
+            "VEGETARIAN / NON-VEGETARIAN SYMBOL: inspect the actual "
+            "package symbol. If clearly visible, return VEGETARIAN or "
+            "NON_VEGETARIAN with confidence and evidence_location. If "
+            "not clearly visible, return NOT_VISIBLE or AMBIGUOUS. "
+            "Never infer vegetarian status from product name, "
+            "ingredients, category, package colour, or assumptions "
+            "about the product. "
+            "EVIDENCE: for EVERY extracted field provide value, status "
+            "(FOUND, NOT_VISIBLE, UNREADABLE, AMBIGUOUS), confidence "
+            "(0-100), evidence_location (where the value appears, e.g. "
+            "\"back image, lower-right declaration block, next to "
+            "MRP\"), handwritten (true/false), and source (AI, "
+            "AI_HANDWRITTEN, or AI_PRINTED). Confidence must represent "
+            "visual readability only — never raise it because a value "
+            "seems plausible, the product is known, the field is "
+            "expected, or another field holds similar digits. "
+            "OUTPUT: return ONLY valid structured JSON matching the "
+            "requested schema. No markdown. No explanation. No legal "
+            "compliance judgment. No recommendations. No inferred "
+            "values. "
+            f"{declaration_focus}{panels_hint}"
             f"Requested fields: {fields}. {ocr_hint} {layout_hint}"
         )
 
@@ -261,19 +362,46 @@ _NEW_STATUS_TO_INTERNAL = {
     "AMBIGUOUS": "NEEDS_REVIEW",
 }
 
-# Spec field aliases -> internal candidate field names.
+# Spec field aliases -> internal candidate field names. Field names
+# are lowercased with spaces/hyphens folded to underscores first.
 _FIELD_ALIASES = {
     "vegetarian_symbol": "veg_nonveg",
     "veg_symbol": "veg_nonveg",
+    "veg_non_veg_symbol": "veg_nonveg",
+    "batch_number": "batch_lot",
+    "batch_no": "batch_lot",
+    "lot_no": "batch_lot",
+    "date_of_manufacture": "manufacturing_date",
+    "manufacturing_date": "manufacturing_date",
+    "mfd": "manufacturing_date",
+    "date_of_packing": "date_of_packing",
+    "packing_date": "date_of_packing",
+    "pkd": "date_of_packing",
+    "expiry_date": "expiry_date",
+    "date_of_expiry": "expiry_date",
+    "exp": "expiry_date",
+    "best_before": "best_before",
+    "bestbefore": "best_before",
+    "fssai_licence": "fssai_license",
+    "fssai_license_no": "fssai_license",
+    "fssai_license_number": "fssai_license",
+    "consumer_care": "consumer_care",
+    "customer_care": "consumer_care",
+    "mrp": "mrp",
+    "maximum_retail_price": "mrp",
+    "max_retail_price": "mrp",
 }
+
+_MODALITIES = ("AI", "AI_HANDWRITTEN", "AI_PRINTED")
 
 
 def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise one model item to the internal candidate schema."""
     item = dict(raw)
-    field = str(item.get("field", "") or "").strip()
-    if field in _FIELD_ALIASES:
-        item["field"] = _FIELD_ALIASES[field]
+    field = str(item.get("field", "") or "").strip().lower()
+    field = field.replace(" ", "_").replace("-", "_")
+    field = _FIELD_ALIASES.get(field, field)
+    item["field"] = field
     status = str(item.get("status", "") or "").strip().upper()
     if status in _NEW_STATUS_TO_INTERNAL:
         item["status"] = _NEW_STATUS_TO_INTERNAL[status]
@@ -293,6 +421,14 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
     if isinstance(item.get("handwritten"), str):
         item["handwritten"] = item["handwritten"].strip().lower() in (
             "true", "1", "yes", "handwritten")
+    # Source modality (AI / AI_HANDWRITTEN / AI_PRINTED): accepted when
+    # valid, otherwise derived from the handwritten flag. Stored as
+    # `modality` so the internal `source: vision` contract is untouched.
+    modality = str(item.get("source", "") or "").strip().upper()
+    if modality not in _MODALITIES:
+        modality = "AI_HANDWRITTEN" if item.get("handwritten") \
+            else "AI_PRINTED"
+    item["modality"] = modality
     return item
 
 

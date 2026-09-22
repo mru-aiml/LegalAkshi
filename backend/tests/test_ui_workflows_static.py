@@ -617,3 +617,24 @@ def test_scan_ingredients_ai_unavailable_message():
     # plainly — never a fabricated list.
     assert 'data-testid="ingredients-ai-unavailable"' in SCAN
     assert "AI could not reliably extract ingredients" in SCAN
+
+
+# --------------------------------- Demo hotfix gates (no silent AI) ---
+def test_scan_ai_values_never_self_accept():
+    # AI suggestions apply ONLY through the officer's explicit Use
+    # action, which records an accepted correction — fields are filled
+    # from OCR or typing, never from aiValues directly.
+    assert 'data-testid={`button-use-ai-' in SCAN
+    assert "setCorrections((list) => [...list, {" in SCAN
+    assert "status: 'AI_EXTRACTED'" in SCAN
+    # No silent writes: the runOcr field fill reads OCR/food values,
+    # never aiValues entries.
+    assert "ingredients_raw: ing?.cleaned_text" in SCAN
+
+
+def test_scan_ai_assisted_terminology():
+    # UI speaks AI-assisted OCR / AI extraction; never guarantees.
+    assert "AI-assisted OCR" in SCAN or "AI-assisted extraction" in SCAN
+    for banned in ("100% accurate", "Guaranteed", "Certified",
+                   "Legally compliant"):
+        assert banned not in SCAN, banned

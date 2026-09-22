@@ -23,6 +23,20 @@ VISION_UNREACHABLE = "UNREACHABLE"
 VISION_AVAILABLE = "AVAILABLE"
 
 
+def _resolve_model(settings: Any) -> str:
+    """Effective Gemini model (spec §1): GEMINI_MODEL, else
+    LEGALAKSHI_VISION_MODEL, else the provider default. Empty means
+    'provider default applies' — never a silent different model."""
+    try:
+        explicit = str(getattr(settings, "GEMINI_MODEL", "") or "").strip()
+        if explicit:
+            return explicit
+        return str(getattr(settings, "LEGALAKSHI_VISION_MODEL", "")
+                   or "").strip()
+    except Exception:
+        return ""
+
+
 def _resolve_api_key(settings: Any) -> str:
     """Server-side key resolution (never exposed to callers).
 
@@ -47,8 +61,7 @@ def get_vision_config() -> dict[str, Any]:
         settings = get_settings()
         provider = str(getattr(settings, "LEGALAKSHI_VISION_PROVIDER", "")
                        or "").strip().lower()
-        model = str(getattr(settings, "LEGALAKSHI_VISION_MODEL", "")
-                    or "").strip()
+        model = _resolve_model(settings)
         enabled = bool(getattr(settings, "LEGALAKSHI_VISION_ENABLED", False))
         has_key = bool(_resolve_api_key(settings))
     except Exception:
@@ -144,7 +157,7 @@ def get_vision_provider(explicit: str | None = None) -> Any | None:
 
         provider = GeminiVisionProvider(
             api_key=_resolve_api_key(settings),
-            model=str(getattr(settings, "LEGALAKSHI_VISION_MODEL", "") or ""))
+            model=_resolve_model(settings))
         if not provider.available():
             log.warning("vision provider gemini requested but not "
                         "configured (missing key/model); OCR-only flow")

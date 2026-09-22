@@ -350,7 +350,7 @@ def decode_raw(raw: bytes) -> Any:
 
 
 def crop_region_jpeg(raw: bytes, rect_stage: list | tuple,
-                     stage_size: list | tuple) -> bytes | None:
+                      stage_size: list | tuple) -> bytes | None:
     """Crop a stage-coordinate rect at full resolution, JPEG-encoded.
 
     Returns None when the crop is degenerate or undecodable (caller
@@ -372,6 +372,54 @@ def crop_region_jpeg(raw: bytes, rect_stage: list | tuple,
             return None
         buf = _io.BytesIO()
         crop.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+# Max bytes for a lossless crop upload (demo declaration pass): below
+# this, PNG preserves every stamped pixel; above it, high-quality
+# JPEG keeps the request bounded. Never thresholded, never binarized,
+# never blurred, never downscaled — original colour only.
+_CROP_PNG_MAX_BYTES = 1_200_000
+
+
+def crop_region_highres(raw: bytes, rect_stage: list | tuple,
+                        stage_size: list | tuple,
+                        pad_frac: float = 0.15) -> bytes | None:
+    """Contextual declaration crop at FULL resolution, colour intact.
+
+    Pads the rect (label + value + nearby context stay together —
+    never a tight value-only sliver), then encodes PNG when the crop
+    is small enough, else JPEG q92. No thresholding, no binarization,
+    no blur, no downscale, no upscaling of tiny inputs.
+    """
+    import io as _io
+
+    try:
+        img = decode_raw(raw)
+        orig_w, orig_h = img.size
+        st_w = max(float(stage_size[0]), 1.0)
+        st_h = max(float(stage_size[1]), 1.0)
+        sx, sy = orig_w / st_w, orig_h / st_h
+        x0, y0, x1, y1 = (float(v) for v in rect_stage)
+        bw, bh = x1 - x0, y1 - y0
+        if bw <= 0 or bh <= 0:
+            return None
+        px, py = bw * pad_frac, bh * pad_frac
+        crop = img.crop((max(0, int((x0 - px) * sx)),
+                         max(0, int((y0 - py) * sy)),
+                         min(orig_w, int((x1 + px) * sx)),
+                         min(orig_h, int((y1 + py) * sy))))
+        if crop.size[0] < 16 or crop.size[1] < 16:
+            return None
+        buf = _io.BytesIO()
+        crop.save(buf, format="PNG")
+        data = buf.getvalue()
+        if len(data) <= _CROP_PNG_MAX_BYTES:
+            return data
+        buf = _io.BytesIO()
+        crop.save(buf, format="JPEG", quality=92)
         return buf.getvalue()
     except Exception:
         return None

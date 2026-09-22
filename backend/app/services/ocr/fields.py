@@ -1363,7 +1363,8 @@ def extract_fields_detailed(lines: list[Any]) -> dict[str, dict[str, Any]]:
     # spatially adjacent; declaration openers (NET/MRP/MFG/...) stop.
     _BATCH_STOP = frozenset(
         {"no", "na", "n/a", "nil", "none", "-", "--", "null", "nr",
-         "net", "not", "new", "pack", "lot", "mrp", "mfg", "mfd", "exp"})
+         "net", "not", "new", "pack", "lot", "number", "numbers",
+         "batch", "mrp", "mfg", "mfd", "exp"})
     _BATCH_STOP_RES = (
         _MRP_CTX, _MFG_CTX, _BB_CTX, _QTY_CTX, _FSSAI_CTX, _CARE_CTX)
 

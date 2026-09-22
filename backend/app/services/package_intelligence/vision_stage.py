@@ -163,6 +163,57 @@ def _payload_hash(payload: Any) -> str | None:
     return None
 
 
+def _declaration_crops(
+    images: list[tuple[Any, str]],
+    ocr_result: dict[str, Any],
+    max_crops: int = 4,
+) -> list[tuple[Any, str]]:
+    """High-resolution declaration/ingredient crops (call-2 payload).
+
+    Builds contextual colour crops (label + value + neighbours) from
+    the OCR region proposals for the declaration and ingredient
+    groups, across the inspection images. Empty when no proposal
+    exists (caller falls back to the full originals). Never raises;
+    never logs image contents.
+    """
+    from app.services.package_intelligence import regions as regions_mod
+
+    crops: list[tuple[Any, str]] = []
+    try:
+        for raw, label in images:
+            if raw is None or len(crops) >= max_crops:
+                break
+            try:
+                proposals = regions_mod.propose_regions(ocr_result,
+                                                        label)
+            except Exception:
+                continue
+            for group in ("B_declarations", "D_ingredients"):
+                if len(crops) >= max_crops:
+                    break
+                try:
+                    region_name, region = regions_mod.region_for_group(
+                        group, proposals)
+                except Exception:
+                    continue
+                if not region:
+                    continue
+                try:
+                    stage_size = _stage_size_for(ocr_result, label)
+                    crop = regions_mod.crop_region_highres(
+                        raw, region.get("rect") or [], stage_size)
+                except Exception:
+                    crop = None
+                if crop is not None:
+                    crops.append(
+                        (crop, f"{label}#{region_name}"))
+                    log.info("vision declaration crop image=%s region=%s "
+                             "bytes=%d", label, region_name, len(crop))
+    except Exception:
+        pass
+    return crops
+
+
 def _representative_original(
     images: list[tuple[Any, str]],
     ocr_result: dict[str, Any],
@@ -730,7 +781,15 @@ def overlay_reconciliation(
                         {"source": "vision", "value": str(value),
                          "confidence": cand.get("confidence"),
                          "image_id": cand.get("image_id"),
-                         "bbox": cand.get("bbox")}],
+                         "bbox": cand.get("bbox"),
+                         # §10: OCR fallback is never relabelled as AI —
+                         # the vision leg keeps its own modality flags.
+                         "handwritten": cand.get("handwritten", False),
+                         "modality": cand.get("modality"),
+                         "evidence_location": cand.get(
+                             "evidence_location"),
+                         "provider": cand.get("provider"),
+                         "model": cand.get("model")}],
                     "agreement": "AGREE",
                     "needs_review_reason": "" if status == "DETECTED"
                     else "low agreement confidence"}
@@ -748,7 +807,13 @@ def overlay_reconciliation(
                         {"source": "vision", "value": str(value),
                          "confidence": cand.get("confidence"),
                          "image_id": cand.get("image_id"),
-                         "bbox": cand.get("bbox")}],
+                         "bbox": cand.get("bbox"),
+                         "handwritten": cand.get("handwritten", False),
+                         "modality": cand.get("modality"),
+                         "evidence_location": cand.get(
+                             "evidence_location"),
+                         "provider": cand.get("provider"),
+                         "model": cand.get("model")}],
                     "agreement": "CONFLICT",
                     "needs_review_reason": "conflicting candidates: "
                     f"rapidocr={ocr_value}, vision={value}"}
@@ -912,6 +977,12 @@ def enhance_ocr_with_vision(
         # same bytes to another group (duplicate-image waste).
         failed_hashes: set[str] = set()
         consolidated_fields: list[str] = []
+        # Free-tier guard: a hard provider failure (429/503/timeout)
+        # with zero candidates halts ALL further AI calls for this
+        # inspection — no retry loops, no budget burn. OCR-only
+        # continues with the recorded error.
+        halt_ai = False
+        halt_reason = ""
         # Consolidated single pass FIRST: one call, all wanted fields,
         # ALL selected original photos. Grouped region-crop calls
         # below then cover only fields still without any usable value —
@@ -953,8 +1024,12 @@ def enhance_ocr_with_vision(
                     group_reports["consolidated"] = {
                         "image": _image_id, "fields": list(wanted),
                         "error": _summary.get("error")}
+                    halt_ai = True
+                    halt_reason = str(_summary.get("error") or
+                                      "consolidated vision call failed")
                     log.info("vision consolidated pass image=%s fields=%d "
-                             "failed: %s", _image_id, len(wanted),
+                             "failed: %s (AI halted for this inspection)",
+                             _image_id, len(wanted),
                              _summary.get("error"))
                 else:
                     all_candidates.extend(
@@ -968,7 +1043,8 @@ def enhance_ocr_with_vision(
                         "n_candidates": len(
                             _summary.get("candidates") or []),
                         "cached": bool(_summary.get("cached")),
-                        "preprocessing_variant": "original-photo"}
+                        "preprocessing_variant": "original-photo",
+                        "image_dimensions": _panel_dimensions(_panels)}
                     log.info("vision consolidated pass image=%s fields=%d "
                              "candidates=%d calls=%d",
                              _image_id, len(wanted),
@@ -987,44 +1063,62 @@ def enhance_ocr_with_vision(
                              == "DETECTED")}
                     still_wanted = [f for f in wanted if f not in covered]
                     # ONE targeted second call: the small declaration
-                    # block (MRP/batch/dates) plus ingredients, same
-                    # images, only fields still without a usable value.
+                    # block (MRP/batch/dates) plus ingredients. Sends
+                    # high-resolution declaration/ingredient CROPS when
+                    # the OCR region proposals yield them (label + value
+                    # + context, colour intact, never thresholded);
+                    # otherwise the same original images. Only fields
+                    # still without a usable value are re-requested.
                     _missing = [f for f in TARGETED_SECOND_CALL_FIELDS
                                 if f in still_wanted]
-                    if _missing and total_calls < MAX_VISION_CALLS:
+                    if _missing and not halt_ai and \
+                            total_calls < MAX_VISION_CALLS:
+                        _t_panels = _declaration_crops(
+                            images, ocr_result)
+                        if not _t_panels:
+                            _t_panels = list(_panels)
+                        _t_image_id = "+".join(
+                            label for _, label in _t_panels)
                         _t_cands, _t_ctx = build_ocr_context(
-                            _missing, ocr_result, _image_id)
+                            _missing, ocr_result, _t_image_id)
                         _t_ctx["pass"] = "targeted-second"
-                        _t_ctx["preprocessing_variant"] = "original-photo"
+                        _t_ctx["preprocessing_variant"] = \
+                            "crop-color-highres" if _t_panels != \
+                            list(_panels) else "original-photo"
                         _t_ctx["panels"] = [
-                            label for _, label in _panels]
+                            label for _, label in _t_panels]
                         _t_summary = extract_with_vision(
-                            resolved, _panels, _missing,
+                            resolved, _t_panels, _missing,
                             ocr_candidates=_t_cands,
                             layout_context=_t_ctx,
                             inspection_id=inspection_id,
                             group_override="targeted-second",
                             per_call_timeout_s=per_call_timeout_s,
                             call_log=calls_log,
-                            multi_images=len(_panels) > 1)
+                            multi_images=len(_t_panels) > 1)
                         total_calls += _t_summary.get("calls", 0)
                         total_cached += _t_summary.get("cached", 0)
                         if _t_summary.get("error") and not _t_summary.get(
                                 "candidates"):
                             group_reports["targeted-second"] = {
-                                "image": _image_id,
+                                "image": _t_image_id,
                                 "fields": list(_missing),
                                 "error": _t_summary.get("error")}
+                            halt_ai = True
+                            halt_reason = str(
+                                _t_summary.get("error") or
+                                "targeted vision call failed")
                         else:
                             all_candidates.extend(
                                 _t_summary.get("candidates") or [])
                             group_reports["targeted-second"] = {
-                                "image": _image_id,
+                                "image": _t_image_id,
                                 "fields": list(_missing),
                                 "n_candidates": len(
                                     _t_summary.get("candidates") or []),
                                 "cached": bool(_t_summary.get("cached")),
-                                "preprocessing_variant": "original-photo"}
+                                "preprocessing_variant": _t_ctx.get(
+                                    "preprocessing_variant")}
                         log.info("vision targeted-second pass fields=%d "
                                  "candidates=%d calls=%d",
                                  len(_missing),
@@ -1047,6 +1141,15 @@ def enhance_ocr_with_vision(
         for group, group_fields in plan.items():
             if total_calls >= MAX_VISION_CALLS:
                 break
+            if halt_ai:
+                # Free-tier guard: an earlier hard failure stops ALL
+                # further AI calls — no retry burn. Recorded per group
+                # for diagnostics; OCR-only continues.
+                group_reports[group] = {
+                    "image": None, "fields": group_fields,
+                    "error": "skipped: AI halted after earlier failure "
+                    f"({halt_reason}); no retry on 429/503/timeout"}
+                continue
             remaining = deadline - time.perf_counter()
             if remaining <= 0.5:
                 break
@@ -1201,6 +1304,7 @@ def enhance_ocr_with_vision(
             "cached": total_cached,
             "consolidated": bool(consolidated_fields),
             "consolidated_fields": consolidated_fields,
+            "targeted_second": "targeted-second" in group_reports,
             "fields": {"detected": reconciliation["field_counts"][
                 "detected"],
                 "needs_review": reconciliation["field_counts"][
@@ -1212,6 +1316,30 @@ def enhance_ocr_with_vision(
                  len(images), total_calls, bool(consolidated_fields),
                  vision_ms, reconciliation.get("reconciliation_ms"),
                  _verdict_counts(reconciliation))
+        try:
+            _t_state = ("executed" if "targeted-second" in group_reports
+                        else "skipped")
+            _dims = (group_reports.get("consolidated") or {}).get(
+                "image_dimensions")
+            # §12 extraction summary: model, images + dimensions, call
+            # counts, per-key-field states, targeted pass state. Never
+            # key material, never image contents.
+            log.info("Gemini extraction: model=%s images=%d dims=%s "
+                     "calls=%d general_fields=%d declaration_fields=%d "
+                     "ingredients=%s mrp=%s batch=%s packing=%s expiry=%s "
+                     "targeted=%s",
+                     getattr(resolved, "model", None), len(images),
+                     _dims, total_calls, len(wanted),
+                     len([f for f in TARGETED_SECOND_CALL_FIELDS
+                          if f in wanted]),
+                     _field_state(reconciliation, "ingredients"),
+                     _field_state(reconciliation, "mrp"),
+                     _field_state(reconciliation, "batch_lot"),
+                     _field_state(reconciliation, "date_of_packing"),
+                     _field_state(reconciliation, "expiry_date"),
+                     _t_state)
+        except Exception:
+            pass
         return ocr_result
     except Exception as exc:  # never break the inspection
         ocr_result["vision"] = {
@@ -1232,6 +1360,48 @@ def enhance_ocr_with_vision(
             pass
         log.info("vision exception: %s", _sanitize_error(exc))
         return ocr_result
+
+
+def _panel_dimensions(
+        panels: list[tuple[Any, str]]) -> list[list[int] | None]:
+    """Pixel dimensions per panel for diagnostics (never contents)."""
+    dims: list[list[int] | None] = []
+    try:
+        from PIL import Image as _Image
+
+        for payload, _label in panels:
+            try:
+                if isinstance(payload, (bytes, bytearray)):
+                    with _Image.open(io.BytesIO(bytes(payload))) as _im:
+                        dims.append([_im.size[0], _im.size[1]])
+                    continue
+            except Exception:
+                pass
+            try:
+                import numpy as _np
+
+                arr = _np.asarray(payload)
+                dims.append([int(arr.shape[1]), int(arr.shape[0])])
+            except Exception:
+                dims.append(None)
+    except Exception:
+        pass
+    return dims
+
+
+def _field_state(reconciliation: dict[str, Any],
+                 field: str) -> str:
+    """One-word extraction state for the §12 summary log."""
+    try:
+        entry = (reconciliation.get("fields") or {}).get(field) or {}
+        if entry.get("final_value") not in (None, ""):
+            return str(entry.get("status") or "?")
+        cands = entry.get("candidates") or []
+        if cands:
+            return "REVIEW"
+        return "MISSING"
+    except Exception:
+        return "?"
 
 
 def _verdict_counts(reconciliation: dict[str, Any]) -> dict[str, int]:
