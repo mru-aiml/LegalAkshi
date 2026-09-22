@@ -19,6 +19,15 @@ VISION_STATUSES = ("DETECTED", "NEEDS_REVIEW", "NOT_DETECTED")
 # AMBIGUOUS: visible but uncertain (conflict, partial occlusion).
 VISION_DETAIL_STATUSES = ("FOUND", "NOT_VISIBLE", "UNREADABLE", "AMBIGUOUS")
 
+# Readability vocabulary some prompts request (mapped onto the detail
+# vocabulary above — never stored raw as verdicts).
+READABILITY_TO_DETAIL = {
+    "CLEAR": "FOUND",
+    "AMBIGUOUS": "AMBIGUOUS",
+    "UNREADABLE": "UNREADABLE",
+    "NOT_VISIBLE": "NOT_VISIBLE",
+}
+
 # Vegetarian-symbol value vocabulary for the veg_nonveg field.
 VEG_SYMBOL_VALUES = ("VEGETARIAN", "NON_VEGETARIAN", "NOT_DETECTED",
                      "AMBIGUOUS")
@@ -65,7 +74,12 @@ def validate_vision_candidate(raw: dict[str, Any]) -> dict[str, Any] | None:
     # NOT_VISIBLE -> NOT_DETECTED; UNREADABLE/AMBIGUOUS -> NEEDS_REVIEW
     # (value kept for audit, never usable as a detection). FOUND keeps
     # the reported status. Unknown detail strings are ignored safely.
+    # The readability_status spelling some prompts use maps first.
     detail = str(raw.get("detail_status", "") or "").strip().upper()
+    if not detail:
+        readability = str(raw.get("readability_status", "") or "")
+        readability = readability.strip().upper()
+        detail = READABILITY_TO_DETAIL.get(readability, "")
     if detail and detail in VISION_DETAIL_STATUSES:
         if detail == "NOT_VISIBLE":
             status, value = "NOT_DETECTED", None

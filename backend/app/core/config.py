@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     # then LEGALAKSHI_VISION_MODEL, then the provider default. No other
     # model is ever silently substituted (spec §1).
     GEMINI_MODEL: str = ""
+    # OpenRouter (OpenAI-compatible) vision provider. Key and model are
+    # server-side only — never sent to, or readable by, the frontend.
+    # Model resolution: OPENROUTER_MODEL, else the free default below.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = ""
+    OPENROUTER_MODEL: str = ""
+    # Groq (OpenAI-compatible) vision provider — the active demo path.
+    # Key/model/base are server-side only. Model resolution:
+    # GROQ_MODEL, else the Groq default below.
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = ""
+    GROQ_MODEL: str = ""
     LEGALAKSHI_VISION_API_KEY: str = ""
     # Accepted fallback for the Gemini key (same secret, plain name).
     # Resolution order: LEGALAKSHI_VISION_API_KEY, then GEMINI_API_KEY.

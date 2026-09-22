@@ -36,3 +36,33 @@ if not repo.ping():
 
 app = create_app(repo)
 log.info("LegalAkshi backend up (store=postgres)")
+try:
+    from app.services.vision import provider as _vision_provider
+
+    _vcfg = _vision_provider.get_vision_config()
+    # Safe diagnostic: provider/model/base-URL booleans only — the API
+    # key (or its length) is never logged, never exposed.
+    _vbase = ""
+    try:
+        from app.core.config import get_settings as _get_settings
+
+        _vsettings = _get_settings()
+        if _vcfg.get("provider") == "groq":
+            _vbase = str(getattr(_vsettings, "GROQ_BASE_URL", "") or "") \
+                or "https://api.groq.com/openai/v1"
+        elif _vcfg.get("provider") == "openrouter":
+            _vbase = str(getattr(_vsettings, "OPENROUTER_BASE_URL", "")
+                         or "") or "https://openrouter.ai/api/v1"
+        else:
+            _vbase = "-"
+    except Exception:
+        pass
+    log.info("vision provider = %s | model = %s | configured = %s | "
+             "base = %s",
+             _vcfg.get("provider") or "(none)",
+             _vcfg.get("model") or "(none)",
+             bool(_vcfg.get("configured")),
+             _vbase or "-")
+except Exception as _exc:
+    log.warning("vision config diagnostic unavailable: %s",
+                type(_exc).__name__)

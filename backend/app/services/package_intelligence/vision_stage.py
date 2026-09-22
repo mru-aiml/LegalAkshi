@@ -882,7 +882,8 @@ def _sanitize_error(exc: BaseException) -> str:
     try:
         from app.core.config import get_settings
 
-        for attr in ("LEGALAKSHI_VISION_API_KEY", "GEMINI_API_KEY"):
+        for attr in ("LEGALAKSHI_VISION_API_KEY", "GEMINI_API_KEY",
+                     "OPENROUTER_API_KEY", "GROQ_API_KEY"):
             key = str(getattr(get_settings(), attr, "") or "")
             if key and key in text:
                 text = text.replace(key, "[redacted]")

@@ -164,14 +164,14 @@ phones, batch, manufacturer, origin, unit price), and the service layer
   (`ocr_ms`, `preprocessing_ms`, `ai_verification_ms`,
   `reconciliation_ms`, `total_backend_ms`) plus per-phase server logs.
 
-## Vision second pass (Gemini, optional)
+## Vision second pass (OpenRouter/Qwen free by default, Gemini optional)
 
 Extraction only — never compliance (the rule engine is untouched).
-Default model `gemini-3.8-flash` (configurable via
-`LEGALAKSHI_VISION_MODEL`; key via `LEGALAKSHI_VISION_API_KEY` with
-`GEMINI_API_KEY` fallback — server-side only, status endpoints report
-presence booleans, never the key); budgets 30s/call, 100s overall, max 6
-calls/inspection. Consolidated-first (`LEGALAKSHI_VISION_CONSOLIDATED`,
+Demo path: OpenRouter chat/completions on `google/gemma-4-31b-it:free`
+(configurable via `OPENROUTER_MODEL`, base via `OPENROUTER_BASE_URL`,
+key via `OPENROUTER_API_KEY` — server-side only, status endpoints
+report presence booleans, never the key; non-`:free` models are
+refused with OCR-only fallback). Consolidated-first (`LEGALAKSHI_VISION_CONSOLIDATED`,
 default true): one call with all wanted fields on ALL selected
 original photos in a single multimodal request (deduped, ≤1600px JPEG,
 capped JSON); ONE targeted second call re-asks only still-missing

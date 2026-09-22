@@ -354,9 +354,12 @@ class GeminiVisionProvider:
 # Prototype response shape (STRICT JSON per field) -> internal schema.
 # Legacy shapes (status DETECTED/..., confidence 0-1, detail_status)
 # keep working: anything unrecognised falls through untouched and the
-# strict validator decides.
+# strict validator decides. VISIBLE (Gemma output vocabulary) means a
+# clearly readable value -> DETECTED.
 _NEW_STATUS_TO_INTERNAL = {
     "FOUND": "DETECTED",
+    "VISIBLE": "DETECTED",
+    "VISIBLE": "DETECTED",
     "NOT_VISIBLE": "NOT_DETECTED",
     "UNREADABLE": "NEEDS_REVIEW",
     "AMBIGUOUS": "NEEDS_REVIEW",
@@ -402,6 +405,21 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
     field = field.replace(" ", "_").replace("-", "_")
     field = _FIELD_ALIASES.get(field, field)
     item["field"] = field
+    # Readability spelling (CLEAR/AMBIGUOUS/UNREADABLE/NOT_VISIBLE)
+    # maps onto the stable status vocabulary when no status is given.
+    status = str(item.get("status", "") or "").strip().upper()
+    if not status:
+        from app.services.vision.schemas import READABILITY_TO_DETAIL
+
+        readability = str(item.get("readability_status", "") or "")
+        readability = readability.strip().upper()
+        detail_hint = READABILITY_TO_DETAIL.get(readability, "")
+        item["status"] = {"FOUND": "DETECTED",
+                          "NOT_VISIBLE": "NOT_DETECTED",
+                          "UNREADABLE": "NEEDS_REVIEW",
+                          "AMBIGUOUS": "NEEDS_REVIEW"}.get(detail_hint, "")
+        if detail_hint and not item.get("detail_status"):
+            item["detail_status"] = detail_hint
     status = str(item.get("status", "") or "").strip().upper()
     if status in _NEW_STATUS_TO_INTERNAL:
         item["status"] = _NEW_STATUS_TO_INTERNAL[status]
@@ -418,6 +436,9 @@ def _normalize_item(raw: dict[str, Any]) -> dict[str, Any]:
     # reason doubles as visible-text evidence when evidence_text absent.
     if item.get("evidence_text") in (None, "") and item.get("reason"):
         item["evidence_text"] = str(item["reason"])[:300]
+    # source_image names the panel holding the value (-> image_id).
+    if item.get("image_id") in (None, "") and item.get("source_image"):
+        item["image_id"] = str(item["source_image"])[:120]
     if isinstance(item.get("handwritten"), str):
         item["handwritten"] = item["handwritten"].strip().lower() in (
             "true", "1", "yes", "handwritten")
